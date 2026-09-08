@@ -1,0 +1,984 @@
+* { box-sizing: border-box; }
+
+/* Material Symbols — one icon family/weight/optical size everywhere,
+   instead of platform emoji (which render as a different picture per OS
+   and can't take the theme's text color). Glyphs are selected by their
+   ligature name in markup, e.g. <span class="material-symbols-outlined">
+   folder</span>; color always follows currentColor, so an icon inside a
+   themed button/link already matches it with no extra rule needed. */
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  display: inline-flex;
+  vertical-align: middle;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+.icon-inline { font-size: 16px; position: relative; top: -1px; }
+
+:root {
+  color-scheme: light;
+
+  /* --- color roles (Material 3 §1) — a hand-picked palette assigned by
+     role, not a runtime-computed tonal-ramp/dynamic-color system (that
+     needs an HCT color-space algorithm from a single key color; out of
+     scope for a hand-authored stylesheet — see docs/design/m3-compliance.md
+     for why that's a disclosed, deliberate gap rather than an oversight).
+     Every role M3 names for a *static* palette is still here, including
+     the two this app didn't have until this pass: Secondary (chips/
+     badges/tonal surfaces) and Tertiary (a second accent, used sparingly
+     to avoid competing with Primary). */
+  --primary: #4f46e5;
+  --on-primary: #ffffff;
+  --primary-contrast: #ffffff; /* kept as an alias — see components still referencing it */
+  --primary-container: #e4e1ff;
+  --on-primary-container: #1c1a4d;
+
+  --secondary: #5b5d72;
+  --on-secondary: #ffffff;
+  --secondary-container: #e0e1f9;
+  --on-secondary-container: #181a2c;
+
+  --tertiary: #7b5265;
+  --on-tertiary: #ffffff;
+  --tertiary-container: #ffd9e8;
+  --on-tertiary-container: #31101f;
+
+  --error: #b3261e;
+  --on-error: #ffffff;
+  --error-container: #f9dedc;
+  --on-error-container: #410e0b;
+  --danger: var(--error); /* pre-existing name, kept as an alias throughout */
+
+  --success: #146c2e; /* M3 has no "success" role either — apps add their own, same as here */
+  --on-success: #ffffff;
+
+  --bg: #f3f2f7; /* "Background" role */
+  --on-bg: #1c1b1f;
+  --surface: #ffffff;
+  --on-surface: #1c1b1f;
+  --on-surface-variant: #49454f;
+  --border: #e1dfe8; /* "Outline" role */
+  --outline-variant: #cac4d0;
+
+  /* surface + elevation tint (M3 §4): each level mixes a little more
+     Primary into Surface rather than just piling on shadow — see the
+     --elevation-* shadows below, used together with these */
+  --surface-1: color-mix(in srgb, var(--surface) 95%, var(--primary) 5%);
+  --surface-2: color-mix(in srgb, var(--surface) 92%, var(--primary) 8%);
+  --surface-3: color-mix(in srgb, var(--surface) 89%, var(--primary) 11%);
+  --surface-alt: var(--surface-2); /* pre-existing name (was its own fixed hex, nearly identical) — now literally level 2, used all over already */
+
+  /* --- elevation (M3 §4): shadow half of the pair above --- */
+  --elevation-0: none;
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.12);
+  --elevation-3: 0 4px 12px rgba(0, 0, 0, 0.16);
+  --elevation-4: 0 6px 16px rgba(0, 0, 0, 0.18);
+  --elevation-5: 0 8px 24px rgba(0, 0, 0, 0.22);
+  --shadow-1: var(--elevation-1); /* pre-existing names, kept as aliases */
+  --shadow-2: var(--elevation-3);
+
+  /* --- shape (M3 §5): a named scale instead of scattered magic numbers —
+     applied where a component's radius already matched one of these
+     values (a pure rename, not a visual change), see components below */
+  --shape-none: 0px;
+  --shape-xs: 4px;
+  --shape-sm: 8px;
+  --shape-md: 12px;
+  --shape-lg: 16px;
+  --shape-xl: 28px;
+  --shape-full: 9999px;
+  --radius: var(--shape-md); /* pre-existing name (was a literal 10px), kept as an alias — now 12px, the nearest step on the real scale */
+
+  /* --- spacing (M3 §3): the 8dp/4dp grid. Most of the app already landed
+     on one of these by hand; a few genuinely-decorative micro-paddings
+     inside already-tuned dense components (chip padding, avatar sizes)
+     intentionally stay off-grid rather than being force-fit and risking
+     a visual regression — see docs/design/m3-compliance.md for exactly
+     which ones and why. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* --- motion (M3 §6) --- */
+  --motion-fast: 150ms;
+  --motion-standard: 300ms;
+  --motion-emphasized: 400ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --easing-emphasized: cubic-bezier(0.3, 0, 0.1, 1);
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2349454f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --primary: #b4a9ff;
+  --on-primary: #1c1330;
+  --primary-contrast: #1c1330;
+  --primary-container: #362f6e;
+  --on-primary-container: #e4e1ff;
+
+  --secondary: #c4c5dd;
+  --on-secondary: #2d2f42;
+  --secondary-container: #434659;
+  --on-secondary-container: #e0e1f9;
+
+  --tertiary: #eab8cd;
+  --on-tertiary: #48293a;
+  --tertiary-container: #613951;
+  --on-tertiary-container: #ffd9e8;
+
+  --error: #ffb4ab;
+  --on-error: #690005;
+  --error-container: #93000a;
+  --on-error-container: #ffdad6;
+  --danger: var(--error);
+
+  --success: #7ddc94;
+  --on-success: #0a3818;
+
+  --bg: #121016;
+  --on-bg: #e7e0e8;
+  --surface: #1d1b22;
+  --on-surface: #e7e0e8;
+  --on-surface-variant: #cac4d0;
+  --border: #34313b;
+  --outline-variant: #49454f;
+
+  --surface-1: color-mix(in srgb, var(--surface) 95%, var(--primary) 5%);
+  --surface-2: color-mix(in srgb, var(--surface) 90%, var(--primary) 10%);
+  --surface-3: color-mix(in srgb, var(--surface) 85%, var(--primary) 15%);
+  --surface-alt: var(--surface-2);
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.45);
+  --elevation-3: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --elevation-4: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --elevation-5: 0 8px 28px rgba(0, 0, 0, 0.6);
+  --shadow-1: var(--elevation-1);
+  --shadow-2: var(--elevation-3);
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23cac4d0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: "Roboto", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--on-surface);
+}
+body { display: flex; }
+
+/* --- type scale (M3 §2): the same five role families (Display/Headline/
+   Title/Body/Label) and their internal weight/line-height relationships,
+   at sizes compressed for a dense, information-heavy desktop tool instead
+   of M3's literal mobile-first numbers (a literal 57px Display Large would
+   dominate a board full of 14px task cards) — see docs/design/
+   m3-compliance.md. Applied to this app's actual headings/titles/labels
+   below; Display isn't used anywhere yet (nothing in this app is a
+   hero-scale number), but the classes exist for whatever needs it next. */
+.type-display-l { font-size: 34px; line-height: 40px; font-weight: 700; }
+.type-display-m { font-size: 28px; line-height: 34px; font-weight: 700; }
+.type-display-s { font-size: 24px; line-height: 30px; font-weight: 700; }
+.type-headline-l { font-size: 22px; line-height: 28px; font-weight: 700; }
+.type-headline-m { font-size: 20px; line-height: 26px; font-weight: 700; }
+.type-headline-s { font-size: 18px; line-height: 24px; font-weight: 700; }
+.type-title-l { font-size: 16px; line-height: 22px; font-weight: 600; }
+.type-title-m { font-size: 14px; line-height: 20px; font-weight: 600; }
+.type-title-s { font-size: 13px; line-height: 18px; font-weight: 600; }
+.type-body-l { font-size: 14px; line-height: 20px; font-weight: 400; }
+.type-body-m { font-size: 13px; line-height: 18px; font-weight: 400; }
+.type-body-s { font-size: 12px; line-height: 16px; font-weight: 400; }
+.type-label-l { font-size: 13px; line-height: 18px; font-weight: 500; }
+.type-label-m { font-size: 12px; line-height: 16px; font-weight: 500; }
+.type-label-s { font-size: 11px; line-height: 14px; font-weight: 500; }
+
+/* Material's own button hierarchy, reduced to the three variants this app
+   actually needs: Filled (.btn-primary — the one confirming/primary action
+   per screen or dialog), Outlined (the bare <button> default — every
+   secondary action sits at this one emphasis level, not a one-off mix of
+   ad hoc resets), and Icon button (.btn-icon — a circular, label-less
+   touch target for a handful of persistent utility actions). Structural,
+   non-"button" components that happen to be <button> elements for
+   semantics/keyboard access — nav items, tabs, breadcrumbs, tag-remove ×,
+   subtask links — opt out of all three by setting their own color/border/
+   background, same as before; they follow Material's Navigation/Tabs
+   specs, not its Button spec. */
+button {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--primary);
+  border-radius: var(--shape-full);
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--easing-standard), border-color var(--motion-fast) var(--easing-standard), box-shadow var(--motion-fast) var(--easing-standard);
+}
+button:hover { background: color-mix(in srgb, var(--primary) 10%, transparent); border-color: var(--primary); }
+button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; box-shadow: none; }
+button:not(.nav-item):has(.material-symbols-outlined) { display: inline-flex; align-items: center; gap: 6px; }
+button:not(.nav-item):has(.material-symbols-outlined)[hidden] { display: none; }
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  border-color: transparent;
+  font-weight: 700;
+}
+.btn-primary:hover { background: var(--primary); border-color: transparent; box-shadow: var(--shadow-2); filter: brightness(1.05); }
+.btn-primary:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 35%, transparent); }
+.btn-primary:disabled { opacity: 0.5; filter: none; box-shadow: none; }
+
+/* Tonal — the fourth M3 button tier this app was missing: filled with a
+   container color rather than Primary itself, for an action that's more
+   than a neutral Outlined action but doesn't deserve the visual weight of
+   the one Filled/primary action on the screen. */
+.btn-tonal {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  border-color: transparent;
+  font-weight: 600;
+}
+.btn-tonal:hover { background: var(--secondary-container); border-color: transparent; box-shadow: var(--elevation-1); filter: brightness(1.05); }
+.btn-tonal:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--secondary) 30%, transparent); }
+.btn-tonal:disabled { opacity: 0.5; filter: none; box-shadow: none; }
+
+/* Icon button — a 48x48dp touch target (M3 §7's accessibility minimum)
+   even though the glyph inside stays a visually-compact 18-20px; the two
+   places this app deliberately keeps a smaller target instead (the tag
+   chip's ×, the notes breadcrumb's back arrow) are dense inline controls
+   inside an already-small component, the same kind of exemption M3's own
+   chip component gets — see docs/design/m3-compliance.md. */
+.btn-icon {
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-icon:hover { background: color-mix(in srgb, var(--on-surface) 8%, transparent); border-color: transparent; box-shadow: none; }
+.btn-icon:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--on-surface-variant) 25%, transparent); }
+.btn-icon .material-symbols-outlined { font-size: 22px; }
+.btn-icon[hidden] { display: none; }
+
+.theme-toggle { padding: 6px 14px; font-size: 12px; }
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: var(--shape-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--on-surface);
+  transition: border-color var(--motion-fast) var(--easing-standard), box-shadow var(--motion-fast) var(--easing-standard);
+}
+input:hover, select:hover, textarea:hover { border-color: var(--on-surface-variant); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Native <select> chrome (the dropdown arrow) is the one form control the
+   rest of the UI can't restyle away — themed via --select-chevron instead
+   of leaving the browser's own (unthemed, OS-dependent) arrow glyph, so it
+   reads as part of the same flat visual language as everything else. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+  padding-right: 26px;
+}
+
+/* --- hamburger --- */
+
+/* Floats directly over page content rather than sitting in a toolbar, so
+   — unlike other icon buttons — it keeps a surface background and resting
+   shadow for contrast against whatever's underneath (the one deliberate
+   exception to .btn-icon's otherwise-transparent resting state). */
+#hamburger {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 20;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+#hamburger:hover { box-shadow: var(--shadow-2); }
+
+/* --- sidebar --- */
+
+#sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--surface-alt);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 12px;
+  transition: margin-left var(--motion-standard) var(--easing-emphasized);
+}
+#sidebar.collapsed { margin-left: -280px; }
+
+/* The hamburger sits fixed at (10,10)-(58,58) in page coordinates, floating
+   over whatever's underneath (see its own comment above) — when the
+   sidebar is expanded, that's this header, so it needs enough left inset
+   to clear the button instead of the brand name rendering half-hidden
+   behind it. 54px = the hamburger's right edge (58) minus this sidebar's
+   own 12px padding, plus an 8px gap. */
+#sidebar-header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding-left: 54px; }
+.brand { font-weight: 700; font-size: 15px; letter-spacing: 0.2px; }
+
+#user-box { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--on-surface-variant); }
+#current-user-label { flex: 1; font-weight: 700; color: var(--on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#logout-btn { padding: 4px 10px; font-size: 11px; }
+
+#profile-photo-preview { display: flex; }
+#profile-photo-preview img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
+
+/* --- toast (replaces alert() for errors that happen outside a modal, e.g.
+   drag-and-drop) --- */
+#toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-3);
+  color: var(--on-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--elevation-3);
+  border-radius: var(--shape-sm);
+  padding: 10px 18px;
+  font-size: 13px;
+  max-width: 380px;
+  text-align: center;
+  z-index: 50;
+}
+#toast[hidden] { display: none; }
+#toast.toast-error { border-color: var(--danger); color: var(--danger); }
+
+/* --- ClickUp-style nav tree --- */
+
+#nav-tree { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; flex: 1; margin-top: 4px; }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--shape-sm);
+  padding: 8px 10px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+.nav-item:hover { background: var(--surface); border-color: transparent; }
+.nav-item:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
+.nav-item.active { background: var(--primary); color: var(--primary-contrast); font-weight: 700; }
+
+.nav-section { margin-top: 6px; }
+.nav-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--on-surface-variant);
+  padding: 6px 10px 2px;
+}
+.nav-subitem { padding-left: 22px; font-weight: 400; font-size: 13px; }
+.nav-empty { padding: 4px 10px; font-size: 12px; color: var(--on-surface-variant); font-style: italic; }
+
+.nav-group { display: flex; flex-direction: column; }
+.nav-group-header { display: flex; align-items: center; gap: 2px; }
+.nav-project-toggle { font-size: 13px; }
+.nav-group-header .nav-project-toggle { flex: 1; min-width: 0; }
+.nav-children { display: flex; flex-direction: column; }
+.nav-children[hidden] { display: none; }
+
+/* Per-project gear, opening straight into that project's Settings instead
+   of it being one more item in the expandable Tasks/Notes list below. Sized
+   like the breadcrumb back-arrow and tag-chip × — a dense inline control
+   inside an already-compact nav row, not a standalone .btn-icon target. */
+.nav-gear-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  border-radius: var(--shape-sm);
+}
+.nav-gear-btn .material-symbols-outlined { font-size: 18px; }
+.nav-gear-btn:hover { background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
+.nav-gear-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--on-surface-variant) 25%, transparent); }
+.nav-gear-btn.active { background: var(--primary); color: var(--primary-contrast); }
+
+/* elegant underline tabs, sit at the top of the main content, not a segmented control */
+#view-toggle, #home-filter, #notes-view-toggle { display: flex; gap: 20px; border-bottom: 2px solid var(--border); }
+#view-toggle[hidden], #home-filter[hidden], #notes-view-toggle[hidden] { display: none; }
+#view-toggle button, #home-filter button, #notes-view-toggle button {
+  border: none; background: transparent; box-shadow: none; border-radius: 0;
+  padding: 8px 2px; margin-bottom: -2px;
+  border-bottom: 2px solid transparent;
+  color: var(--on-surface-variant); font-weight: 500;
+}
+#view-toggle button:hover, #home-filter button:hover, #notes-view-toggle button:hover { background: transparent; color: var(--on-surface); }
+#view-toggle button.active, #home-filter button.active, #notes-view-toggle button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 700; }
+#new-folder-btn { font-size: 13px; }
+
+/* --- notes: breadcrumb, list (Drive-style columns), grid (Drive-style tiles) --- */
+
+#notes-breadcrumb { margin-top: 10px; display: flex; align-items: center; gap: 2px; font-size: 13px; color: var(--on-surface-variant); }
+#notes-breadcrumb[hidden] { display: none; }
+#notes-back-btn { width: 24px; height: 24px; margin-right: 4px; }
+#notes-back-btn .material-symbols-outlined { font-size: 16px; }
+.breadcrumb-item {
+  border: none; background: transparent; box-shadow: none; padding: 2px 4px;
+  font-size: 13px; color: var(--on-surface-variant); cursor: pointer;
+}
+.breadcrumb-item:last-child { color: var(--on-surface); font-weight: 600; }
+.breadcrumb-item:hover { text-decoration: underline; background: transparent; }
+
+.notes-table { display: flex; flex-direction: column; }
+.notes-table-header, .notes-table-row {
+  display: grid;
+  grid-template-columns: 1fr 200px 140px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+}
+.notes-table-header { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); border-bottom: 1px solid var(--border); }
+.notes-table-row { border-bottom: 1px solid var(--border); cursor: pointer; border-radius: var(--shape-sm); }
+.notes-table-row:hover { background: var(--surface-alt); }
+.notes-name-cell { display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-table-row span:nth-child(2) { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--on-surface-variant); }
+.notes-table-row span:nth-child(3) { font-size: 12px; color: var(--on-surface-variant); }
+
+.notes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+
+/* Same card chrome for every tile — border/radius/shadow/hover matches
+   .item-card elsewhere in the app — so folders and notes read as one
+   consistent family of square boxes, distinguished only by icon/content,
+   not by different box styles. */
+.notes-tile {
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  padding: 12px;
+  gap: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+.notes-tile:hover { box-shadow: var(--shadow-2); }
+
+.notes-tile-titlebar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.notes-tile-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
+.notes-tile-icon .material-symbols-outlined { font-size: inherit; }
+.notes-tile-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.notes-tile-preview {
+  flex: 1;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+}
+.notes-tile-footer { margin-top: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--on-surface-variant); min-width: 0; }
+.notes-tile-owner-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Folders hold no preview, so their icon+name is centered as the sole
+   content instead of pinned to the top like a note's titlebar. */
+.notes-tile-folder {
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--surface-alt);
+}
+.notes-tile-folder .notes-tile-icon { font-size: 34px; }
+.notes-tile-folder .notes-tile-name { font-size: 12.5px; }
+
+/* --- main / board views --- */
+
+#main { flex: 1; min-width: 0; overflow: auto; padding: 20px 24px 20px 56px; }
+
+#main-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+#main-title { font-size: 18px; margin: 0; }
+#main-topbar { display: flex; align-items: center; gap: 16px; }
+
+.board-view { display: flex; flex-direction: column; gap: 8px; }
+.board-view[hidden] { display: none; }
+
+.home-project-group { margin-bottom: 20px; }
+.home-project-group h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); margin: 0 0 8px; }
+
+.status-section { margin-bottom: 18px; border-radius: var(--radius); }
+.status-section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); margin: 0 0 8px; }
+.status-section .item-card, .status-section .status-add-row { margin-bottom: 6px; }
+.status-section.drag-over, .notes-table-row.drag-over, .notes-tile-folder.drag-over, .breadcrumb-item.drag-over {
+  outline: 2px dashed var(--primary);
+  outline-offset: -4px;
+}
+.item-card[draggable="true"] { cursor: grab; }
+.item-card.dragging, .notes-table-row.dragging, .notes-tile.dragging { opacity: 0.5; }
+.notes-table-row[draggable="true"], .notes-tile[draggable="true"] { cursor: grab; }
+
+.status-add-row {
+  border: 1px dashed var(--border);
+  border-radius: var(--shape-sm);
+  padding: 8px 10px;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  text-align: center;
+  font-size: 13px;
+}
+.status-add-row:hover { background: var(--surface-alt); color: var(--on-surface); border-color: var(--primary); }
+
+.item-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+}
+.item-card:hover { box-shadow: var(--shadow-2); }
+.item-card .item-title { font-weight: 600; }
+.item-card .item-meta { display: block; font-size: 12px; color: var(--on-surface-variant); margin-top: 2px; }
+
+.card-meta-row { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+/* Secondary is M3's own example role for "badges, chips" — a tonal
+   container distinct from the neutral surface tones used for backgrounds/
+   cards, so a tag reads as a small piece of colored metadata rather than
+   part of the card's own surface. */
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--shape-sm);
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+/* the current status gets Primary instead — a tonal highlight, not just
+   colored text, so it doesn't rely on color alone (see also: the status
+   name itself is always spelled out as text right next to/inside it,
+   satisfying M3's color-independence rule the same way) */
+.badge-status { background: var(--primary-container); color: var(--on-primary-container); font-weight: 700; }
+
+.card-people-row { margin-top: 6px; display: flex; align-items: center; }
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+.avatar-owner { box-shadow: 0 0 0 2px var(--primary); }
+.avatar-stack { display: inline-flex; margin-left: 6px; }
+.avatar-photo { overflow: hidden; }
+.avatar-photo img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-stack .avatar + .avatar { margin-left: -8px; box-shadow: 0 0 0 2px var(--surface); }
+
+#members-view { max-width: 480px; }
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.member-row .member-name { flex: 1; font-weight: 600; }
+.member-row button { padding: 4px 10px; font-size: 12px; }
+.member-row select { padding: 4px 22px 4px 10px; font-size: 12px; background-position: right 6px center; }
+#add-member-form { display: flex; gap: 8px; margin-top: 8px; }
+#add-member-form input { flex: 1; }
+
+/* --- kanban --- */
+
+#kanban-view { flex-direction: row; overflow-x: auto; padding-bottom: 8px; }
+.kanban-column {
+  min-width: 240px;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+.kanban-column.drag-over { outline: 2px dashed var(--primary); outline-offset: -4px; }
+.kanban-column h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--on-surface-variant);
+}
+.kanban-cards { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.kanban-cards .status-add-row { font-size: 12px; padding: 6px 8px; }
+.kanban-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--shape-sm);
+  padding: 8px 10px;
+  cursor: grab;
+  box-shadow: var(--shadow-1);
+  font-size: 13px;
+}
+.kanban-card:hover { box-shadow: var(--shadow-2); }
+.kanban-card.dragging { opacity: 0.5; }
+.kanban-card .card-meta { display: block; font-size: 11px; color: var(--on-surface-variant); margin-top: 3px; }
+
+/* --- editor dialog --- */
+
+dialog {
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  background: var(--surface-3);
+  color: var(--on-surface);
+  box-shadow: var(--elevation-3);
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+
+/* --- unlock / encryption dialogs --- */
+
+#login-google-btn {
+  display: block;
+  text-decoration: none;
+  padding: 8px 16px;
+  border-radius: var(--shape-full);
+  cursor: pointer;
+}
+#login-google-btn[hidden] { display: none; }
+#login-error { color: var(--danger); }
+
+#unlock-dialog, #vault-secret-dialog { padding: 20px; min-width: 360px; max-width: 440px; }
+#unlock-dialog[open], #vault-secret-dialog[open] { display: flex; flex-direction: column; gap: 12px; }
+#unlock-status { color: var(--danger); }
+#vault-secret-value {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--shape-sm);
+  padding: 10px 12px;
+  word-break: break-all;
+  user-select: all;
+}
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.spinner[hidden] { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#scope-encryption-fields #encryption-status-text { color: var(--on-surface-variant); }
+
+#history-dialog { padding: 20px; min-width: 420px; max-width: 520px; }
+#history-dialog[open] { display: flex; flex-direction: column; gap: 12px; max-height: 80vh; }
+#history-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.history-entry { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: var(--shape-sm); }
+.history-entry:hover { background: var(--surface-alt); }
+.history-entry-meta { flex: 1; min-width: 0; }
+.history-entry-message { font-size: 13px; color: var(--on-surface); }
+.history-entry-sub { font-size: 11px; color: var(--on-surface-variant); }
+.history-entry button { padding: 4px 12px; font-size: 12px; flex-shrink: 0; }
+#history-status { font-size: 12px; color: var(--on-surface-variant); }
+
+#editor-dialog[open] { width: 92vw; max-width: 1200px; height: 88vh; display: flex; flex-direction: column; }
+#editor-dialog.fullscreen[open] {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  inset: 0;
+  margin: 0;
+  border-radius: 0;
+}
+#editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+#meta-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--on-surface-variant);
+}
+.meta-title { flex-basis: 100%; font-size: 14px; font-weight: 600; color: var(--on-surface); }
+.meta-id { font-size: 11px; }
+#save-status { font-size: 12px; color: var(--on-surface-variant); max-width: 30%; }
+
+#presence-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--on-secondary-container);
+  background: var(--secondary-container);
+  border-radius: var(--shape-full);
+  padding: 4px 12px;
+}
+#presence-indicator[hidden] { display: none; }
+#presence-indicator::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+/* One shared banner for every multi-user notice inside the editor — a
+   remote change landed while this item was open, a merge happened
+   automatically, or a real conflict needs the user's attention. Variant
+   class picks the M3 container color; everything else about it is the
+   same (message + up to a couple of actions). */
+#editor-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+#editor-banner[hidden] { display: none; }
+#editor-banner-text { flex: 1; }
+#editor-banner-actions { display: flex; gap: 8px; }
+#editor-banner-actions button { padding: 4px 12px; font-size: 12px; }
+.banner-info { background: var(--secondary-container); color: var(--on-secondary-container); }
+.banner-warn { background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.banner-error { background: var(--error-container); color: var(--on-error-container); }
+.banner-info #editor-banner-actions button, .banner-warn #editor-banner-actions button, .banner-error #editor-banner-actions button {
+  color: inherit;
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+}
+
+#header-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+#header-panel[hidden] { display: none; }
+.header-field { display: flex; align-items: center; gap: 12px; padding: 6px; border-radius: var(--shape-sm); }
+.header-field[hidden] { display: none; }
+.header-field:hover { background: var(--surface); }
+.header-field > label { width: 100px; flex-shrink: 0; font-size: 12px; color: var(--on-surface-variant); }
+.header-field select, .header-field > input { font-size: 13px; }
+#header-status, #header-due-date { max-width: 220px; }
+#header-owner { display: flex; align-items: center; gap: 6px; }
+#header-save-status { font-size: 11px; color: var(--on-surface-variant); padding-left: 112px; }
+
+.chip-field-wrap { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  border-radius: var(--shape-sm); /* Chips use M3's Small shape, not Full — unlike buttons, chips are never fully pill-shaped */
+  padding: 2px 4px 2px 10px;
+  font-size: 12px;
+}
+.tag-chip .avatar { width: 16px; height: 16px; font-size: 8px; }
+.tag-chip button {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 5px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+.tag-chip button:hover { color: var(--danger); }
+#header-tags-input {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  min-width: 90px;
+  flex: 1;
+  padding: 2px 4px;
+  border-radius: var(--shape-sm);
+}
+#header-tags-input:hover { border-color: transparent; }
+#header-tags-input:focus { outline: none; box-shadow: none; background: var(--surface); }
+/* Chromium draws its own (unthemed) dropdown-suggestions indicator on any
+   input wired to a <datalist> — same pseudo-element as the date/time
+   picker icon. Hidden here only (not on real date inputs, which should
+   keep their native icon) since the chip row already implies "there's a
+   list to pick from" via placeholder + the tag chips themselves. */
+#header-tags-input::-webkit-calendar-picker-indicator { display: none; }
+/* Matches the chip row's own compact height (~20px) instead of the full
+   bordered <select> box — was visibly taller than the chips sitting right
+   next to it in the same row before this. Same "blend in at rest, show
+   its box on hover/focus" treatment #header-tags-input already used, so
+   both "add a new one" controls (tags' input, assigned-to's select) read
+   as the same size/weight as each other and as the chips beside them. */
+#header-assigned-add {
+  border: none;
+  background-color: transparent;
+  background-position: right 4px center;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  max-width: 140px;
+  padding: 2px 20px 2px 6px;
+  border-radius: var(--shape-sm);
+}
+#header-assigned-add:hover { background-color: color-mix(in srgb, var(--on-surface) 6%, transparent); border-color: transparent; }
+#header-assigned-add:focus { background-color: var(--surface); }
+
+#header-parent-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
+#header-parent-select { max-width: 240px; }
+#header-parent-open { font-size: 12px; padding: 4px 10px; }
+
+#header-children-wrap { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+#header-children-list { display: flex; flex-direction: column; gap: 3px; width: 100%; }
+#header-related-notes-list { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.child-link {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.header-empty-hint { font-size: 12px; color: var(--on-surface-variant); }
+#add-subtask-btn { font-size: 12px; padding: 4px 10px; }
+
+/* --- inline [[item-id]] references, rendered clickable in the preview --- */
+.ref-link {
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ref-broken {
+  color: var(--danger);
+  border-bottom: 1px dashed var(--danger);
+  cursor: help;
+}
+
+#ref-picker-body { display: flex; flex-direction: column; gap: 10px; padding: 20px; width: 360px; }
+#ref-picker-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; }
+.ref-picker-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--shape-sm);
+  cursor: pointer;
+}
+.ref-picker-row:hover { background: var(--surface-alt); }
+.ref-picker-row .ref-picker-id { color: var(--on-surface-variant); font-size: 11px; }
+
+#panes { flex: 1; display: flex; min-height: 0; }
+#editor-pane, #preview-pane { flex: 1; min-width: 0; overflow: auto; }
+#editor-pane { border-right: 1px solid var(--border); }
+#editor-pane.hidden { display: none; }
+#preview { padding: 20px; max-width: 800px; margin: 0 auto; }
+
+.CodeMirror { height: 100%; font-size: 13px; background: var(--surface); color: var(--on-surface); }
+.CodeMirror-gutters { background: var(--surface-alt); border-color: var(--border); }
+
+/* --- new-item dialog --- */
+
+dialog form { display: flex; flex-direction: column; gap: 12px; padding: 20px; min-width: 280px; }
+.dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+#new-form-status { flex: 1; font-size: 12px; color: var(--danger); }
+/* pushes whatever comes after it (Cancel/Save) to the right, while a
+   leading action like #logout-btn stays pinned left — so a standalone
+   action in a dialog's footer doesn't read as part of the Cancel/Save pair */
+.dialog-actions-spacer { flex: 1; }
+
+/* --- settings dialog (profile-dialog): theme, session --- */
+.settings-row { display: flex; align-items: center; justify-content: space-between; }
+
+/* --- adaptive layout (M3 §3): Compact / Medium / Expanded — the
+   sidebar-as-fixed-280px-column layout this app has used all along *is*
+   already the Medium/Expanded pattern (a persistent nav rail/drawer next
+   to the content); Compact is the one window-size class it didn't handle
+   at all before this pass, where a permanent 280px column would eat most
+   of a phone-width viewport. Below that breakpoint the sidebar becomes an
+   overlay instead of a permanent column (starts collapsed — see app.js —
+   and slides on top of the content instead of pushing it over), and the
+   content margin drops from 24dp to the Compact spec's 16dp. This is a
+   width-based breakpoint (not a device check), so a narrow desktop window
+   gets the same treatment as a phone, which is the correct M3 behavior. */
+@media (max-width: 599px) {
+  #main { padding: var(--space-4) var(--space-4) var(--space-4) 56px; }
+  #sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 15;
+    box-shadow: var(--elevation-3);
+  }
+}
+
+@media (min-width: 600px) and (max-width: 839px) {
+  #main { padding: var(--space-5) var(--space-6) var(--space-5) 56px; }
+}

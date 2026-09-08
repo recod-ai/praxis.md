@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+*.db
+# real secrets (Google OAuth client secret, session secret, ...) — see
+# .env.example for the template that *is* committed.
+.env
+# workspace/ is its own git repository (see app/git_store.py) — the app's
+# own source repo never tracks it, nested or otherwise.
+workspace/

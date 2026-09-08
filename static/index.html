@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>praxis.md</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/material-darker.css" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0&display=block" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <dialog id="login-dialog">
+    <form id="login-form">
+      <h2 style="margin:0">praxis.md</h2>
+      <p id="login-error" class="type-body-s" hidden></p>
+      <label id="login-select-label">Log in as
+        <input type="text" id="login-select" list="login-known-users" required placeholder="username" autocomplete="off" />
+        <datalist id="login-known-users"></datalist>
+      </label>
+      <div class="dialog-actions">
+        <button type="submit" id="login-submit" class="btn-primary">Log in</button>
+      </div>
+      <a id="login-google-btn" class="btn-primary" href="/auth/google/login" hidden style="text-align:center">
+        Sign in with Google
+      </a>
+    </form>
+  </dialog>
+
+  <dialog id="unlock-dialog">
+    <form id="unlock-form">
+      <h2 style="margin:0">Unlock project</h2>
+      <p id="unlock-dialog-text"></p>
+      <label>Project password
+        <input type="password" id="unlock-secret-input" autocomplete="off" required />
+      </label>
+      <p id="unlock-status" class="type-body-s" hidden></p>
+      <div class="dialog-actions">
+        <span id="unlock-spinner" class="spinner" hidden aria-hidden="true"></span>
+        <span class="dialog-actions-spacer"></span>
+        <button type="button" id="unlock-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="unlock-submit">Unlock</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="vault-secret-dialog">
+    <h2 style="margin:0">Save this project's password</h2>
+    <p>This is shown <strong>once</strong>. Anyone opening <strong id="vault-secret-project-name"></strong> — including you, next time — needs it, and there's no way to recover it if it's lost. Save it in a password manager now.</p>
+    <div id="vault-secret-value" class="type-title-m"></div>
+    <div class="dialog-actions">
+      <button type="button" id="vault-secret-copy">Copy</button>
+      <span class="dialog-actions-spacer"></span>
+      <button type="button" id="vault-secret-done" class="btn-primary">I've saved it</button>
+    </div>
+  </dialog>
+
+  <dialog id="profile-dialog">
+    <form id="profile-form">
+      <h2 style="margin:0">Settings</h2>
+      <label>Full name
+        <input type="text" id="profile-full-name" placeholder="e.g. Marcos Rai" />
+      </label>
+      <label>Photo
+        <input type="file" id="profile-photo-input" accept="image/*" />
+      </label>
+      <div id="profile-photo-preview"></div>
+      <button type="button" id="profile-remove-photo" hidden>Remove photo</button>
+      <div class="settings-row">
+        <span>Theme</span>
+        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme"><span class="material-symbols-outlined" aria-hidden="true">dark_mode</span> Dark</button>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="logout-btn">Log out</button>
+        <span class="dialog-actions-spacer"></span>
+        <button type="button" id="profile-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <button id="hamburger" class="btn-icon" aria-label="Toggle menu"><span class="material-symbols-outlined" aria-hidden="true">menu</span></button>
+
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <span class="brand">praxis.md</span>
+    </div>
+    <div id="user-box">
+      <span id="current-user-avatar"></span>
+      <span id="current-user-label"></span>
+      <button id="edit-profile-btn" class="btn-icon" aria-label="Settings"><span class="material-symbols-outlined" aria-hidden="true">settings</span></button>
+    </div>
+
+    <nav id="nav-tree">
+      <button class="nav-item" id="nav-home" data-nav="home"><span class="material-symbols-outlined" aria-hidden="true">home</span> Home</button>
+      <div class="nav-section">
+        <div class="nav-section-title">Projects</div>
+        <div id="nav-projects"></div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Note Bases</div>
+        <div id="nav-kbs"></div>
+      </div>
+    </nav>
+  </aside>
+
+  <main id="main">
+    <div id="main-header">
+      <h1 id="main-title" class="type-headline-s">Home</h1>
+      <div id="main-topbar">
+        <div id="home-filter">
+          <button data-bucket="today" class="active">Today</button>
+          <button data-bucket="this_week">This week</button>
+          <button data-bucket="others">Others</button>
+        </div>
+        <div id="view-toggle" hidden>
+          <button data-view="list" class="active">List</button>
+          <button data-view="kanban">Kanban</button>
+        </div>
+        <div id="notes-view-toggle" hidden>
+          <button data-view="notes-list" class="active">List</button>
+          <button data-view="notes-grid">Grid</button>
+        </div>
+        <button id="new-folder-btn" class="btn-tonal" hidden>+ New folder</button>
+        <button id="new-btn" class="btn-primary" hidden>+ New</button>
+      </div>
+      <div id="notes-breadcrumb" hidden></div>
+    </div>
+    <div id="home-view" class="board-view"></div>
+    <div id="list-view" class="board-view" hidden></div>
+    <div id="kanban-view" class="board-view" hidden></div>
+    <div id="notes-list-view" class="board-view" hidden></div>
+    <div id="notes-grid-view" class="board-view" hidden></div>
+    <div id="members-view" class="board-view" hidden>
+      <div id="scope-settings-fields" hidden>
+        <div class="header-field">
+          <label for="scope-name-input">Name</label>
+          <input type="text" id="scope-name-input" />
+        </div>
+        <div class="header-field">
+          <label for="scope-icon-select">Icon</label>
+          <span id="scope-icon-preview" class="material-symbols-outlined" aria-hidden="true"></span>
+          <select id="scope-icon-select"></select>
+          <button type="button" id="scope-name-save" class="btn-tonal">Save</button>
+        </div>
+      </div>
+      <div id="scope-encryption-fields" hidden>
+        <h3 class="type-title-s" style="margin:16px 0 6px">Encryption</h3>
+        <p id="encryption-status-text" class="type-body-m"></p>
+        <button type="button" id="encrypt-project-btn" class="btn-tonal" hidden>
+          <span class="material-symbols-outlined icon-inline" aria-hidden="true">lock</span> Encrypt this project
+        </button>
+        <button type="button" id="lock-project-btn" hidden>
+          <span class="material-symbols-outlined icon-inline" aria-hidden="true">lock</span> Lock now
+        </button>
+      </div>
+      <div id="members-list"></div>
+      <form id="add-member-form">
+        <input id="add-member-input" placeholder="username" />
+        <select id="add-member-role">
+          <option value="editor" selected>editor</option>
+          <option value="admin">admin</option>
+          <option value="guest">guest</option>
+        </select>
+        <button type="submit" class="btn-primary">+ Add</button>
+      </form>
+    </div>
+  </main>
+
+  <dialog id="editor-dialog">
+    <div id="editor-topbar">
+      <span id="meta-summary">Select an item</span>
+      <span id="presence-indicator" hidden></span>
+      <button id="attach-note-btn" class="btn-icon" hidden title="Attach note" aria-label="Attach note"><span class="material-symbols-outlined" aria-hidden="true">attach_file</span></button>
+      <button id="history-btn" class="btn-icon" title="Version history" aria-label="View version history"><span class="material-symbols-outlined" aria-hidden="true">history</span></button>
+      <button id="toggle-read" class="btn-icon" title="Read mode" aria-label="Switch to read mode"><span class="material-symbols-outlined" aria-hidden="true">visibility</span></button>
+      <button id="fullscreen-btn" class="btn-icon" title="Enter fullscreen" aria-label="Enter fullscreen"><span class="material-symbols-outlined" aria-hidden="true">fullscreen</span></button>
+      <button id="save-btn" class="btn-primary">Save</button>
+      <span id="save-status"></span>
+      <button id="editor-close" class="btn-icon" aria-label="Close"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+    </div>
+    <div id="editor-banner" hidden>
+      <span id="editor-banner-text"></span>
+      <div id="editor-banner-actions"></div>
+    </div>
+    <div id="header-panel" hidden>
+      <div id="header-owner-field" class="header-field">
+        <label>Owner</label>
+        <span id="header-owner"></span>
+        <button type="button" id="rename-file-btn" class="btn-icon" hidden title="Rename file" aria-label="Rename file"><span class="material-symbols-outlined" aria-hidden="true">drive_file_rename_outline</span></button>
+        <button type="button" id="transfer-owner-btn" class="btn-icon" hidden title="Transfer ownership" aria-label="Transfer ownership"><span class="material-symbols-outlined" aria-hidden="true">swap_horiz</span></button>
+      </div>
+      <div id="header-status-field" class="header-field">
+        <label for="header-status">Status</label>
+        <select id="header-status"></select>
+      </div>
+      <div id="header-due-date-field" class="header-field">
+        <label for="header-due-date">Due date</label>
+        <input type="date" id="header-due-date" />
+      </div>
+      <div id="header-assigned-to-field" class="header-field">
+        <label id="header-assigned-label">Assigned to</label>
+        <div class="chip-field-wrap">
+          <div id="header-assigned-chips" class="chip-list"></div>
+          <select id="header-assigned-add"><option value="">+ add person</option></select>
+        </div>
+      </div>
+      <div class="header-field">
+        <label>Tags</label>
+        <div class="chip-field-wrap">
+          <div id="header-tags-chips" class="chip-list"></div>
+          <input type="text" id="header-tags-input" list="header-tags-datalist" placeholder="+ add tag" />
+          <datalist id="header-tags-datalist"></datalist>
+        </div>
+      </div>
+      <div class="header-field">
+        <label id="header-parent-label">Main task</label>
+        <div id="header-parent-wrap">
+          <select id="header-parent-select"><option value="">— none —</option></select>
+          <button type="button" id="header-parent-open" hidden>Open <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button>
+        </div>
+      </div>
+      <div class="header-field" id="header-children-field">
+        <label>Subtasks</label>
+        <div id="header-children-wrap">
+          <div id="header-children-list"></div>
+          <button type="button" id="add-subtask-btn" hidden>+ Add subtask</button>
+        </div>
+      </div>
+      <div class="header-field" id="header-related-notes-field">
+        <label>Related notes</label>
+        <div id="header-related-notes-list"></div>
+      </div>
+      <span id="header-save-status"></span>
+    </div>
+    <div id="panes">
+      <div id="editor-pane"><textarea id="editor"></textarea></div>
+      <div id="preview-pane"><div id="preview"></div></div>
+    </div>
+  </dialog>
+
+  <div id="toast" hidden></div>
+
+  <dialog id="ref-picker-dialog">
+    <div id="ref-picker-body">
+      <input type="text" id="ref-picker-search" placeholder="Search notes by title or id…" />
+      <div id="ref-picker-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="new-dialog">
+    <form id="new-form">
+      <label>Template (optional)
+        <select id="new-template"><option value="">— none —</option></select>
+      </label>
+      <div class="dialog-actions">
+        <span id="new-form-status"></span>
+        <button type="button" id="new-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="history-dialog">
+    <h2 style="margin:0">Version history</h2>
+    <div id="history-list"></div>
+    <div class="dialog-actions">
+      <span id="history-status"></span>
+      <span class="dialog-actions-spacer"></span>
+      <button type="button" id="history-close">Close</button>
+    </div>
+  </dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/markdown/markdown.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/yaml/yaml.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
