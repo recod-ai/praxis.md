@@ -3,7 +3,7 @@
 Science-focused task and knowledge manager — markdown + YAML as the
 organizing format, on the same premise as
 [taskmd](https://github.com/taskmd/taskmd). Runs locally, not depending on
-`knowledge-server` (Oracle Cloud) for now.
+`agorae` (Oracle Cloud) for now.
 
 Full design in [docs/design/schema.md](docs/design/schema.md).
 
@@ -57,42 +57,43 @@ By default it serves `workspace/` — to point at another workspace:
 PRAXIS_WORKSPACE_DIR=/path/to/workspace uv run uvicorn app.main:app --reload
 ```
 
-### Real login (Google), instead of the dev dropdown
+### Real login (OIDC), instead of the dev dropdown
 
 The dropdown above is a dev-only convenience — no password, anyone can
-claim to be anyone. Real use needs `PRAXIS_AUTH_MODE=google` plus a real
-Google OAuth client. What that takes, end to end:
+claim to be anyone. Real use needs `PRAXIS_AUTH_MODE=oidc` plus a real
+OAuth2/OIDC client — any standard OIDC provider works (this isn't
+Google-specific, just discovery-URL + client credentials), but in agorae's
+own deployment that provider is **metroon** (agorae's own small
+access-registry service — see `docs/METROON.md` in the `agorae` repo), not
+Google directly. What real login takes, end to end:
 
-1. **Create the OAuth client** — in the
-   [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-   (any Google account works, doesn't need to be a Workspace admin):
-   - Create a project (or reuse one).
-   - **APIs & Services → OAuth consent screen**: User type "Internal" if
-     this is a Google Workspace domain (e.g. `unicamp.br`) and only that
-     domain should ever log in — otherwise "External" (with "Testing"
-     publish status is fine while it's just your lab; Google caps
-     External+Testing at 100 test users, added by email under "Test
-     users" on that same screen).
-   - **APIs & Services → Credentials → Create Credentials → OAuth client
-     ID**, type "Web application".
-   - **Authorized redirect URIs**: add `<your-url>/auth/google/callback`
-     — for local testing that's `http://127.0.0.1:8000/auth/google/callback`
-     (Google allows plain HTTP on localhost); a real deployment needs its
-     actual HTTPS domain instead.
-   - Save — it hands you a **Client ID** and **Client secret**.
-2. **Put them in `.env`** (`cp .env.example .env`, then fill in
-   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and set
-   `PRAXIS_AUTH_MODE=google`; `GOOGLE_HOSTED_DOMAIN=unicamp.br` is optional
-   — it just narrows Google's account picker to that Workspace domain, it
-   doesn't restrict who can log in on its own).
-3. **Link each username to the email that'll sign in as them** — add
-   `email: someone@unicamp.br` to `workspace/users/<username>.yml` (create
-   the file if it doesn't exist yet; see Workspace layout below). Logging
-   in with Google only *authenticates* — it never creates an account or
-   grants access on its own, so an email with no username linked to it is
-   refused, not auto-registered. Project/note-base membership
-   (`project.yml`/`kb.yml`) still decides who can see what, exactly as in
-   `dev` mode.
+1. **Create the OAuth client** — with metroon, that means adding an entry
+   to `metroon_clients` in agorae's `vars.yml`:
+   ```yaml
+   metroon_clients:
+     - client_id: "praxis"
+       client_secret: "<random>"
+       redirect_uris:
+         - "https://praxis.agorae.dedyn.io/auth/oidc/callback"
+   ```
+   (for local testing against a real metroon instance, use
+   `http://127.0.0.1:8000/auth/oidc/callback` instead). Re-run
+   `playbooks/metroon.yml` after adding it.
+2. **Put the values in `.env`** (`cp .env.example .env`, then fill in
+   `PRAXIS_OIDC_DISCOVERY_URL` — metroon's is
+   `https://metroon.agorae.dedyn.io/.well-known/openid-configuration` —
+   `PRAXIS_OIDC_CLIENT_ID`, `PRAXIS_OIDC_CLIENT_SECRET`, and set
+   `PRAXIS_AUTH_MODE=oidc`).
+3. **That's it — logins auto-provision.** Anyone your OIDC provider
+   authenticates (with a verified email) gets a praxis.md account on their
+   first login if they don't have one yet, username derived from the email's
+   local part (`config.provision_user_from_email`). It starts in zero
+   projects/note bases, though — project/note-base membership
+   (`project.yml`/`kb.yml`) is what decides who can actually *see* anything,
+   exactly as in `dev` mode. Add someone as a member ahead of time (with an
+   `email` alongside their `username` — see the "Add member" form, or
+   `POST .../members`) to have them land inside a specific project/note base
+   the moment they first log in, instead of starting with none.
 4. `uv run uvicorn app.main:app --reload` (or however it's actually
    deployed) — `.env` is picked up automatically.
 

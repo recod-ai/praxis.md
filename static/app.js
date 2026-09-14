@@ -173,14 +173,14 @@ const loginSelect = document.getElementById("login-select");
 const loginKnownUsers = document.getElementById("login-known-users");
 const loginSelectLabel = document.getElementById("login-select-label");
 const loginSubmitBtn = document.getElementById("login-submit");
-const loginGoogleBtn = document.getElementById("login-google-btn");
+const loginOidcBtn = document.getElementById("login-oidc-btn");
 const loginError = document.getElementById("login-error");
 const currentUserLabel = document.getElementById("current-user-label");
 const currentUserAvatar = document.getElementById("current-user-avatar");
 
 let sessionUser = null;
 let userProfiles = {}; // username -> {username, full_name, photo} — see loadUserProfiles
-let authMode = "dev"; // "dev" (dropdown, no password) or "google" (real OAuth) — see /api/auth/config
+let authMode = "dev"; // "dev" (dropdown, no password) or "oidc" (real OAuth2/OIDC) — see /api/auth/config
 
 function currentUser() {
   return sessionUser || "";
@@ -203,7 +203,7 @@ async function loadUserProfiles() {
 
 loginDialog.addEventListener("cancel", (e) => e.preventDefault()); // mandatory gate, no Escape-to-dismiss
 
-// A failed /auth/google/callback redirects here with ?auth_error=... (see
+// A failed /auth/oidc/callback redirects here with ?auth_error=... (see
 // main.py) rather than rendering its own error page, so the message shows
 // up in the same login dialog the user was already looking at.
 const authErrorFromUrl = new URLSearchParams(location.search).get("auth_error");
@@ -215,14 +215,14 @@ async function showLoginScreen() {
   const modeRes = await fetch("/api/auth/config");
   authMode = modeRes.ok ? (await modeRes.json()).mode : "dev";
 
-  if (authMode === "google") {
+  if (authMode === "oidc") {
     loginSelectLabel.hidden = true;
     loginSubmitBtn.hidden = true;
-    loginGoogleBtn.hidden = false;
+    loginOidcBtn.hidden = false;
   } else {
     loginSelectLabel.hidden = false;
     loginSubmitBtn.hidden = false;
-    loginGoogleBtn.hidden = true;
+    loginOidcBtn.hidden = true;
     const users = await loadUserProfiles();
     loginSelect.value = "";
     // a free-typed username, not a strict picklist — with no members
@@ -355,6 +355,8 @@ document.getElementById("profile-form").addEventListener("submit", async (e) => 
 const navHome = document.getElementById("nav-home");
 const navProjects = document.getElementById("nav-projects");
 const navKbs = document.getElementById("nav-kbs");
+const newProjectBtn = document.getElementById("new-project-btn");
+const newKbBtn = document.getElementById("new-kb-btn");
 const viewToggle = document.getElementById("view-toggle");
 const homeFilter = document.getElementById("home-filter");
 const newBtn = document.getElementById("new-btn");
@@ -450,6 +452,7 @@ const metaSummary = document.getElementById("meta-summary");
 const saveStatus = document.getElementById("save-status");
 const transferOwnerBtn = document.getElementById("transfer-owner-btn");
 const renameFileBtn = document.getElementById("rename-file-btn");
+const deleteItemBtn = document.getElementById("delete-item-btn");
 const attachNoteBtn = document.getElementById("attach-note-btn");
 const saveBtn = document.getElementById("save-btn");
 const historyBtn = document.getElementById("history-btn");
@@ -864,6 +867,48 @@ fullscreenBtn.addEventListener("click", () => {
 
 document.getElementById("editor-close").addEventListener("click", () => editorDialog.close());
 
+// --- header panel / content split: draggable, remembered per browser ---
+// Same #editor-body layout for both tasks and notes, so one resizer covers
+// both — there's nothing type-specific to wire up separately.
+const editorBody = document.getElementById("editor-body");
+const editorResizer = document.getElementById("editor-resizer");
+const HEADER_PANEL_WIDTH_KEY = "praxis-header-panel-pct";
+const DEFAULT_HEADER_PANEL_PCT = 25;
+
+function applyHeaderPanelWidth(pct) {
+  headerPanel.style.flexBasis = `${pct}%`;
+}
+
+function loadHeaderPanelWidth() {
+  const stored = Number(localStorage.getItem(HEADER_PANEL_WIDTH_KEY));
+  applyHeaderPanelWidth(stored > 0 && stored < 100 ? stored : DEFAULT_HEADER_PANEL_PCT);
+}
+loadHeaderPanelWidth();
+
+editorResizer.addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  editorResizer.classList.add("dragging");
+  const bodyRect = editorBody.getBoundingClientRect();
+
+  function onMove(moveEvent) {
+    const pct = ((moveEvent.clientX - bodyRect.left) / bodyRect.width) * 100;
+    applyHeaderPanelWidth(Math.min(60, Math.max(15, pct)));
+    // dragging the split resizes #panes underneath CodeMirror's feet, same
+    // as a fullscreen toggle — it needs telling to remeasure or it goes
+    // blank/misaligned until something else forces a refresh
+    cm.refresh();
+  }
+  function onUp() {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    editorResizer.classList.remove("dragging");
+    const finalPct = parseFloat(headerPanel.style.flexBasis) || DEFAULT_HEADER_PANEL_PCT;
+    localStorage.setItem(HEADER_PANEL_WIDTH_KEY, String(finalPct));
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+});
+
 function closeOnBackdropClick(dialogEl) {
   // A click event's target is the dialog element itself only when it lands
   // on the ::backdrop — any click on the dialog's own content lands on some
@@ -966,10 +1011,8 @@ headerTagsInput.addEventListener("keydown", (e) => {
 headerTagsInput.addEventListener("change", addTagFromInput); // picking a <datalist> suggestion fires change, not keydown
 
 // assigned_to, same pick-from-a-list shape as tags, but the source is fixed
-// (project members) rather than pick-or-create — a <select> to add plus
-// chips to remove, instead of a native multi-select (which needs
-// ctrl/cmd-click to pick more than one — easy to read as "only one person
-// allowed" if you don't know that)
+// (project/kb members, via the shared attachUserPicker — see below) rather
+// than pick-or-create, plus chips to remove.
 function renderAssignedChips() {
   const assigned = currentItemMeta.assigned_to || [];
   headerAssignedChips.innerHTML = assigned
@@ -982,20 +1025,17 @@ function renderAssignedChips() {
       saveHeader();
     });
   }
-  // project members if we're in a project, note-base members if we're in a
-  // note base — both are the same {username: role} shape in scopeConfig now
-  const scopeMembers = scopeConfig ? Object.keys(scopeConfig.members) : [];
-  headerAssignedAdd.innerHTML = '<option value="">+ add person</option>' +
-    scopeMembers.filter((u) => !assigned.includes(u)).map((u) => `<option value="${u}">${displayNameFor(u)}</option>`).join("");
+  headerAssignedAdd.value = "";
 }
 
-headerAssignedAdd.addEventListener("change", () => {
-  const u = headerAssignedAdd.value;
-  if (!u) return;
-  currentItemMeta.assigned_to = [...(currentItemMeta.assigned_to || []), u];
-  renderAssignedChips();
-  saveHeader();
-});
+// attachUserPicker(headerAssignedAdd, ...) is wired up further down, right
+// after memberCandidates() is defined — attachUserPicker itself is a hoisted
+// function declaration so calling it here would be fine, but it closes over
+// the module-level `userPickerRegistry` (a `const` declared much later in
+// the file), and calling it before that line runs throws a TDZ
+// ReferenceError that kills the rest of this script's initial evaluation
+// (confirmed live: nothing past this point ever ran, including
+// checkSession() at the bottom — no login dialog, no personal info, no nav).
 
 // Points at a TASK either way, but what that link *means* differs by who's
 // holding it: a task pointing at a task is a hierarchy (Main task/Subtasks),
@@ -1175,17 +1215,21 @@ async function openItem(id) {
   const canEditBody = perms.can_edit_body;
   transferOwnerBtn.hidden = !perms.can_transfer_owner;
   renameFileBtn.hidden = !perms.can_rename || data.metadata.type !== "knowledge";
+  deleteItemBtn.hidden = !perms.can_delete;
   attachNoteBtn.hidden = !canEditBody;
   saveBtn.hidden = !canEditBody;
   toggleReadBtn.hidden = !canEditBody;
   await renderHeaderPanel(data.metadata, perms.can_edit_header);
   transferOwnerBtn.onclick = async () => {
-    const newOwner = prompt(`Transfer ownership of ${id} to:`, "");
-    if (!newOwner || !newOwner.trim()) return;
+    const picked = await pickUser({
+      title: `Transfer ownership of ${id} to…`,
+      getCandidates: () => memberCandidates([data.metadata.owner]),
+    });
+    if (!picked) return;
     const r = await fetch(`${itemsBaseUrl()}/${id}/owner`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ new_owner: newOwner.trim() }),
+      body: JSON.stringify({ new_owner: picked.id }),
     });
     if (r.ok) {
       await loadItems();
@@ -1196,6 +1240,18 @@ async function openItem(id) {
       // would render behind its backdrop and never actually be seen
       headerSaveStatus.style.color = "var(--danger)";
       headerSaveStatus.textContent = (await r.json()).detail || "Could not transfer ownership.";
+    }
+  };
+  deleteItemBtn.onclick = async () => {
+    if (!confirm(`Delete ${data.filename}? This can't be undone.`)) return;
+    const r = await fetch(`${itemsBaseUrl()}/${id}`, { method: "DELETE" });
+    if (r.ok) {
+      cancelPendingAutosave(); // nothing left to flush on close — the file's gone
+      editorDialog.close();
+      loadItems();
+    } else {
+      headerSaveStatus.style.color = "var(--danger)";
+      headerSaveStatus.textContent = (await r.json()).detail || "Could not delete.";
     }
   };
   renameFileBtn.onclick = async () => {
@@ -1390,6 +1446,40 @@ async function loadNav() {
   selectHome();
 }
 
+newProjectBtn.addEventListener("click", async () => {
+  const name = prompt("Project name:");
+  if (!name || !name.trim()) return;
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  if (res.ok) {
+    const created = await res.json();
+    await refreshNavLists();
+    selectScope("project", created.slug, "tasks");
+  } else {
+    alert((await res.json()).detail || "Could not create the project.");
+  }
+});
+
+newKbBtn.addEventListener("click", async () => {
+  const name = prompt("Note base name:");
+  if (!name || !name.trim()) return;
+  const res = await fetch("/api/knowledge-bases", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  if (res.ok) {
+    const created = await res.json();
+    await refreshNavLists();
+    selectScope("kb", created.slug, "knowledge");
+  } else {
+    alert((await res.json()).detail || "Could not create the note base.");
+  }
+});
+
 function updateNavActive() {
   document.querySelectorAll(".nav-item, .nav-gear-btn").forEach((el) => {
     const key = el.dataset.type ? `${el.dataset.type}:${el.dataset.slug}` : el.dataset.nav;
@@ -1480,6 +1570,7 @@ async function renderMembers() {
   membersList.innerHTML = "";
   const isAdmin = data.role === "admin";
   addMemberForm.hidden = !isAdmin;
+  if (isAdmin) loadMemberDirectory();
 
   // both a project and a note base have a name/icon now (see kb.yml/
   // project.yml's own `name`/`icon`) — only the members list's shape
@@ -1632,19 +1723,265 @@ scopeNameSaveBtn.addEventListener("click", async () => {
   }
 });
 
+function escapeAttr(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Same derivation as config.provision_user_from_email on the server, just
+// so the username this suggests matches the account someone would already
+// get auto-provisioned with on their first OIDC login (see PRAXIS.md) —
+// purely a starting point, the admin can still edit it before submitting.
+function suggestUsernameFromEmail(email) {
+  return (email.split("@")[0] || "").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+}
+
+let memberDirectory = null;
+
+// Everyone allowed through metroon (see GET /api/directory) — backs the
+// add-member picker below so an admin can find someone instead of typing
+// their email from memory. Loaded once per page load (the allowlist
+// doesn't change often enough to justify refetching every time the
+// Members panel opens).
+async function loadMemberDirectory() {
+  if (memberDirectory) return memberDirectory;
+  const res = await fetch("/api/directory");
+  memberDirectory = res.ok ? await res.json() : [];
+  return memberDirectory;
+}
+
+// --- reusable "type to find a person" combobox ---------------------------
+// One artifact behind every person-picker in the app: add-member,
+// assigned-to, and transfer-ownership. It only ever renders/filters
+// whatever candidate pool it's handed — project/kb membership
+// (scopeConfig.members) and the metroon directory (GET /api/directory) are
+// both already fetched from the server elsewhere, this doesn't re-fetch
+// anything itself. A candidate is {id, primary, secondary?, avatarSeed}:
+// `id` is what's handed to onSelect, `primary`/`secondary` are what's
+// shown, `avatarSeed` is what avatarHTML() keys its photo/initials off of.
+const userPickerRegistry = new WeakMap();
+
+function attachUserPicker(input, { getCandidates, onSelect, maxResults = 8 }) {
+  // pickUser() (see below) reattaches on the same <input> every time its
+  // dialog opens — swap the live config instead of piling up a fresh menu
+  // element and duplicate document-level listeners each time.
+  const existing = userPickerRegistry.get(input);
+  if (existing) {
+    existing.getCandidates = getCandidates;
+    existing.onSelect = onSelect;
+    existing.maxResults = maxResults;
+    return;
+  }
+  const config = { getCandidates, onSelect, maxResults };
+  userPickerRegistry.set(input, config);
+
+  const menu = document.createElement("div");
+  menu.className = "user-picker-menu";
+  menu.hidden = true;
+  document.body.appendChild(menu);
+
+  let activeIndex = -1;
+  let currentMatches = [];
+
+  function positionMenu() {
+    const rect = input.getBoundingClientRect();
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.width = `${Math.max(rect.width, 220)}px`;
+  }
+
+  function closeMenu() {
+    menu.hidden = true;
+    activeIndex = -1;
+  }
+
+  function renderMenu() {
+    const query = input.value.trim().toLowerCase();
+    const pool = config.getCandidates();
+    currentMatches = (query
+      ? pool.filter(
+          (c) =>
+            c.primary.toLowerCase().includes(query) ||
+            (c.secondary || "").toLowerCase().includes(query) ||
+            c.id.toLowerCase().includes(query)
+        )
+      : pool
+    ).slice(0, config.maxResults);
+
+    menu.innerHTML = currentMatches.length
+      ? currentMatches
+          .map(
+            (c, i) =>
+              `<div class="user-picker-option${i === activeIndex ? " active" : ""}" data-index="${i}">${avatarHTML(c.avatarSeed)}<span>${escapeAttr(c.primary)}${c.secondary ? ` <span class="muted">${escapeAttr(c.secondary)}</span>` : ""}</span></div>`
+          )
+          .join("")
+      : '<div class="user-picker-empty">No matches</div>';
+    for (const el of menu.querySelectorAll(".user-picker-option")) {
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // keep the input from blurring (and the menu closing) before the click registers
+        selectMatch(Number(el.dataset.index));
+      });
+    }
+    positionMenu();
+    menu.hidden = false;
+  }
+
+  function selectMatch(i) {
+    const candidate = currentMatches[i];
+    if (!candidate) return;
+    closeMenu();
+    config.onSelect(candidate);
+  }
+
+  input.addEventListener("input", () => {
+    activeIndex = -1;
+    renderMenu();
+  });
+  input.addEventListener("focus", renderMenu);
+  input.addEventListener("keydown", (e) => {
+    if (menu.hidden) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeIndex = Math.min(activeIndex + 1, currentMatches.length - 1);
+      renderMenu();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeIndex = Math.max(activeIndex - 1, 0);
+      renderMenu();
+    } else if (e.key === "Enter") {
+      if (activeIndex >= 0) {
+        e.preventDefault();
+        selectMatch(activeIndex);
+      }
+    } else if (e.key === "Escape") {
+      closeMenu();
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (e.target !== input && !menu.contains(e.target)) closeMenu();
+  });
+  window.addEventListener("resize", () => {
+    if (!menu.hidden) positionMenu();
+  });
+}
+
+// Current project/kb's members as picker candidates — the "is this person
+// actually in that project" backend check the picker relies on is just
+// scopeConfig itself, already fetched from GET .../config server-side.
+function memberCandidates(excludeIds = []) {
+  const members = scopeConfig ? Object.keys(scopeConfig.members) : [];
+  return members
+    .filter((u) => !excludeIds.includes(u))
+    .map((u) => {
+      const name = displayNameFor(u);
+      return { id: u, primary: name, secondary: name !== u ? u : "", avatarSeed: u };
+    });
+}
+
+attachUserPicker(headerAssignedAdd, {
+  getCandidates: () => memberCandidates(currentItemMeta.assigned_to || []),
+  onSelect: (candidate) => {
+    currentItemMeta.assigned_to = [...(currentItemMeta.assigned_to || []), candidate.id];
+    renderAssignedChips();
+    saveHeader();
+  },
+});
+
+// Everyone metroon allows, for picking someone to add as a new member (they
+// may not have a praxis.md account — or even be a member of anything —
+// yet, so this can't just be memberCandidates()).
+function directoryCandidates() {
+  return (memberDirectory || []).map((p) => ({
+    id: p.email,
+    primary: p.name || p.email,
+    secondary: p.name ? p.email : "",
+    avatarSeed: p.name || p.email,
+  }));
+}
+
+// --- a small reusable dialog wrapper around attachUserPicker, for the
+// cases (transfer ownership) that need an explicit confirm step rather
+// than picking straight into an inline field ---
+const userPickDialog = document.getElementById("user-pick-dialog");
+const userPickForm = document.getElementById("user-pick-form");
+const userPickInput = document.getElementById("user-pick-input");
+const userPickTitle = document.getElementById("user-pick-title");
+const userPickConfirm = document.getElementById("user-pick-confirm");
+const userPickStatus = document.getElementById("user-pick-status");
+document.getElementById("user-pick-cancel").addEventListener("click", () => userPickDialog.close());
+
+function pickUser({ title, getCandidates }) {
+  return new Promise((resolve) => {
+    userPickTitle.textContent = title;
+    userPickInput.value = "";
+    userPickStatus.textContent = "";
+    userPickConfirm.disabled = true;
+    let picked = null;
+
+    attachUserPicker(userPickInput, {
+      getCandidates,
+      onSelect: (candidate) => {
+        picked = candidate;
+        userPickInput.value = candidate.primary;
+        userPickConfirm.disabled = false;
+      },
+    });
+    // typing again after picking someone invalidates that pick — they have
+    // to choose again (from the list) before Confirm re-enables
+    function onInput() {
+      picked = null;
+      userPickConfirm.disabled = true;
+    }
+
+    function onSubmit(e) {
+      e.preventDefault();
+      if (!picked) return;
+      cleanup();
+      userPickDialog.close();
+      resolve(picked);
+    }
+    function onClose() {
+      cleanup();
+      resolve(null);
+    }
+    function cleanup() {
+      userPickInput.removeEventListener("input", onInput);
+      userPickForm.removeEventListener("submit", onSubmit);
+      userPickDialog.removeEventListener("close", onClose);
+    }
+    userPickInput.addEventListener("input", onInput);
+    userPickForm.addEventListener("submit", onSubmit);
+    userPickDialog.addEventListener("close", onClose);
+    userPickDialog.showModal();
+    userPickInput.focus();
+  });
+}
+
+attachUserPicker(document.getElementById("add-member-email"), {
+  getCandidates: directoryCandidates,
+  onSelect: (candidate) => {
+    const emailInput = document.getElementById("add-member-email");
+    const usernameInput = document.getElementById("add-member-input");
+    emailInput.value = candidate.id;
+    if (!usernameInput.value.trim()) usernameInput.value = suggestUsernameFromEmail(candidate.id);
+  },
+});
+
 addMemberForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = document.getElementById("add-member-input");
+  const emailInput = document.getElementById("add-member-email");
   const roleSelect = document.getElementById("add-member-role");
   const username = input.value.trim();
+  const email = emailInput.value.trim();
   if (!username || !scope) return;
   const res = await fetch(scopeMembersUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, role: roleSelect.value }),
+    body: JSON.stringify({ username, role: roleSelect.value, email: email || null }),
   });
   if (res.ok) {
     input.value = "";
+    emailInput.value = "";
     renderMembers();
   } else {
     alert((await res.json()).detail || "Could not add member.");
@@ -1672,6 +2009,18 @@ function dateBucket(dueDate) {
   return "others";
 }
 
+// Personal tasks live inside Home itself, not as a project in the sidebar
+// (see config.is_personal_project) — this is the one button that creates
+// one, since there's no project screen to reach a "+ New" button from.
+async function addPersonalTask() {
+  const res = await fetch("/api/me/personal-project");
+  if (!res.ok) return;
+  const personal = await res.json();
+  scope = { type: "project", slug: personal.slug };
+  contentFilter = "tasks";
+  openCreateDialog({ type: "task" });
+}
+
 async function renderHome() {
   homeView.innerHTML = "<p>Loading…</p>";
   const res = await fetch("/api/me/tasks");
@@ -1681,17 +2030,26 @@ async function renderHome() {
   }
   const groups = await res.json();
   homeView.innerHTML = "";
+
+  const addRow = document.createElement("div");
+  addRow.id = "home-add-personal-task";
+  addRow.innerHTML = `<button type="button" class="btn-tonal" id="add-personal-task-btn">+ Add personal task</button>`;
+  homeView.appendChild(addRow);
+  document.getElementById("add-personal-task-btn").addEventListener("click", addPersonalTask);
+
   const filteredGroups = groups
-    .map((g) => ({ project: g.project, tasks: g.tasks.filter((t) => dateBucket(t.due_date) === homeBucket) }))
+    .map((g) => ({ project: g.project, name: g.name, tasks: g.tasks.filter((t) => dateBucket(t.due_date) === homeBucket) }))
     .filter((g) => g.tasks.length);
   if (!filteredGroups.length) {
-    homeView.innerHTML = "<p>Nothing here.</p>";
+    const empty = document.createElement("p");
+    empty.textContent = "Nothing here.";
+    homeView.appendChild(empty);
     return;
   }
   for (const group of filteredGroups) {
     const section = document.createElement("div");
     section.className = "home-project-group";
-    section.innerHTML = `<h2>${group.project}</h2>`;
+    section.innerHTML = `<h2>${group.name || group.project}</h2>`;
     for (const task of group.tasks) {
       const card = document.createElement("div");
       card.className = "item-card";

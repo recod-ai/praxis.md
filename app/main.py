@@ -9,13 +9,14 @@ from typing import Literal
 from urllib.parse import quote
 
 import frontmatter
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import config, events, git_store, index, storage, vault
+from . import archeion_mirror, config, events, git_store, index, storage, vault
 from .permissions import check_body_save, check_header_save
 
 
@@ -72,6 +73,7 @@ class LoginRequest(BaseModel):
 class MemberRequest(BaseModel):
     username: str
     role: str = config.DEFAULT_ROLE
+    email: str | None = None  # optional: links `username` for OIDC login (see config.link_user_email)
 
 
 class TransferOwnerRequest(BaseModel):
@@ -103,6 +105,15 @@ class KbConfigRequest(BaseModel):
 class ProjectConfigRequest(BaseModel):
     name: str
     icon: str
+
+
+class NewScopeRequest(BaseModel):
+    """Creating a project or note base — just a name (icon optional, falls
+    back to the type's default). Slug is derived from the name server-side,
+    never supplied by the client (see config.create_project/create_kb)."""
+
+    name: str
+    icon: str | None = None
 
 
 class CreateRequest(BaseModel):
@@ -227,6 +238,24 @@ def _publish_item_changed(scope_dir: Path, item_id: str | None, acting_user: str
     events.bus.publish(_scope_channel(scope_dir), {"type": "item_changed", "id": item_id, "by": acting_user})
 
 
+def _mirror_project_to_archeion(slug: str, acting_user: str, message: str) -> None:
+    """Best-effort push of a project's current state to its archeion mirror
+    (see archeion_mirror.py) — called after every project-scope item
+    mutation. Never touches an encrypted project: its whole point is
+    staying off any second copy, mirror included."""
+    if vault.has_vault(slug):
+        return
+    archeion_mirror.sync_project(slug, config.get_project_name(slug), config.project_dir(slug), acting_user, message)
+
+
+def _sync_project_collaborators_to_archeion(slug: str) -> None:
+    if vault.has_vault(slug):
+        return
+    archeion_mirror.sync_collaborators(
+        slug, config.get_project_name(slug), config.get_members(slug), lambda u: config.get_user_profile(u).get("email")
+    )
+
+
 def _sanitize_relpath(raw: str) -> str:
     """A folder path made only of sanitized segments, "/"-joined — used for
     both creating a folder and placing/moving a note into one. Empty
@@ -325,6 +354,7 @@ def _get_item(scope_dir: Path, item_id: str, acting_user: str, can_edit_scope: b
             "can_rename": can_edit_scope and is_owner,
             "can_transfer_owner": can_edit_scope and is_owner,
             "can_move": can_edit_scope and is_owner and item_type == "knowledge",
+            "can_delete": can_edit_scope and is_owner,
         },
     }
 
@@ -358,6 +388,15 @@ def _create_item(scope_dir: Path, req: CreateRequest, project_slug: str | None, 
                 raise HTTPException(404, f"Template not found: {req.type}/{req.template}")
             body = tpl_path.read_text(encoding="utf-8")
 
+        assigned_to = req.assigned_to
+        if req.type == "task" and not assigned_to and project_slug and config.get_members(project_slug) == [owner]:
+            # a solo project (personal tasks — see config.ensure_personal_project)
+            # has nobody else to leave a task unassigned "for" — defaulting to
+            # yourself is what makes it show up in Home's "my tasks"
+            # (main.py's my_tasks filters on assigned_to, not just ownership),
+            # with no effect on who's allowed to edit it (the owner always is).
+            assigned_to = [owner]
+
         meta = {
             "id": item_id,
             "type": req.type,
@@ -366,7 +405,7 @@ def _create_item(scope_dir: Path, req: CreateRequest, project_slug: str | None, 
             "tags": req.tags,
             # "Assigned to" on a task, "Users" on a note (who besides the owner
             # can edit the body) — same field either way, see check_body_save
-            "assigned_to": req.assigned_to,
+            "assigned_to": assigned_to,
             "created": today,
             "updated": today,
         }
@@ -451,7 +490,14 @@ def _save_item(scope_dir: Path, item_id: str, req: SaveRequest, acting_user: str
         index.reindex_item(content_dir, path)
         message = f"Merge concurrent edits to {item_id}" if merged else f"Edit {item_id}"
         commit_sha = git_store.commit_all(git_root, message, acting_user)
-        new_version = commit_sha or current_version
+        # NOT commit_sha itself — that's a *commit* sha, but every version
+        # token elsewhere (current_version above, _get_item's response) is a
+        # *blob* sha (git_store.current_blob_sha). Returning the commit sha
+        # here fed a bogus base_version into every save after the first,
+        # which forced the merge path every time and handed a commit object
+        # to blob_content() as if it were the file's blob — see the fixed
+        # bug's writeup in docs/design/schema.md#versioning.
+        new_version = git_store.current_blob_sha(git_root, relpath) if commit_sha else current_version
         if commit_sha:
             _publish_item_changed(scope_dir, item_id, acting_user)
 
@@ -534,6 +580,28 @@ def _transfer_owner(scope_dir: Path, item_id: str, req: TransferOwnerRequest, ac
     return {"ok": True}
 
 
+def _delete_item(scope_dir: Path, item_id: str, acting_user: str) -> dict:
+    content_dir, git_root = config.resolve_scope(scope_dir)
+    with git_store.LOCK:
+        path = index.find_path_by_id(content_dir, item_id)
+        if path is None:
+            raise HTTPException(404, "Item not found")
+        post = storage.load(path)
+        if post.metadata.get("owner") != acting_user:
+            raise HTTPException(403, "Only the owner can delete this item.")
+        # a dangling `parent:` would otherwise point at nothing — same
+        # "main task must exist" invariant _check_parent_is_task enforces
+        # on the way in, just checked on the way out instead
+        children = [item["id"] for item in index.list_items(content_dir) if item.get("parent") == item_id]
+        if children:
+            raise HTTPException(409, f"Can't delete: {len(children)} item(s) still have this as their main task.")
+        path.unlink()
+        index.remove_item(content_dir, item_id)
+        if git_store.commit_all(git_root, f"Delete {item_id}", acting_user):
+            _publish_item_changed(scope_dir, item_id, acting_user)
+    return {"ok": True}
+
+
 def _item_history(scope_dir: Path, item_id: str) -> list[dict]:
     content_dir, git_root = config.resolve_scope(scope_dir)
     path = index.find_path_by_id(content_dir, item_id)
@@ -568,33 +636,70 @@ def _restore_item(scope_dir: Path, item_id: str, sha: str, acting_user: str) -> 
 # alone. Meant for local development/testing only — see
 # docs/design/schema.md#permissions for what it doesn't guarantee.
 #
-# "google": real OAuth2 — logging in actually proves who you are to
-# Google, and get_current_user's session is only ever set to a username
-# that identity is linked to (config.find_username_by_email). It never
-# creates an account: a Google identity with no matching `email:` in any
-# workspace/users/<username>.yml profile is refused, not auto-registered —
-# membership (config.py's members: lists) stays the only thing that grants
-# access to a project/note base, same as today.
+# "oidc": real OAuth2/OIDC against whatever issuer PRAXIS_OIDC_DISCOVERY_URL
+# points at (any standard OIDC provider — in agorae's deployment, that's
+# metroon, see its README's "Real login (OIDC)" section) — logging in
+# actually proves who you are to that provider, and get_current_user's
+# session is set to a username that identity is linked to
+# (config.find_username_by_email), auto-provisioning a bare one on first
+# login if none exists yet (config.provision_user_from_email) — anyone
+# metroon already lets through is trusted here too, same as archeion/stoa.
+# Membership (config.py's members: lists) still decides what that account
+# can actually *see* — a fresh one starts in zero projects/note bases.
 
 AUTH_MODE = os.environ.get("PRAXIS_AUTH_MODE", "dev")
 
 oauth = None
-if AUTH_MODE == "google":
+if AUTH_MODE == "oidc":
     from authlib.integrations.starlette_client import OAuth
 
     oauth = OAuth()
     oauth.register(
-        name="google",
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_id=os.environ["GOOGLE_CLIENT_ID"],
-        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
-        client_kwargs={"scope": "openid email profile"},
+        name="oidc",
+        server_metadata_url=os.environ["PRAXIS_OIDC_DISCOVERY_URL"],
+        client_id=os.environ["PRAXIS_OIDC_CLIENT_ID"],
+        client_secret=os.environ["PRAXIS_OIDC_CLIENT_SECRET"],
+        client_kwargs={"scope": "openid email profile", "code_challenge_method": "S256"},
     )
 
 
 @app.get("/api/users")
 def list_users():
-    return [{"username": u, **config.get_user_profile(u)} for u in config.list_known_users()]
+    # email deliberately excluded — this endpoint is unauthenticated (powers
+    # the login picker before anyone's signed in), and email is only ever
+    # meant to be readable by the account it belongs to and admins managing
+    # membership, not broadcast to anyone who can reach the site.
+    result = []
+    for u in config.list_known_users():
+        profile = {k: v for k, v in config.get_user_profile(u).items() if k != "email"}
+        result.append({"username": u, **profile})
+    return result
+
+
+@app.get("/api/directory")
+def directory(user: str = Depends(get_current_user)):
+    """Everyone allowed through metroon (name + email) — powers the
+    autocomplete on "Add member" (see static/app.js) so an admin can pick
+    someone instead of typing their email from memory. Being allowed
+    through metroon is already what grants login access here (see
+    oidc_callback/config.provision_user_from_email), so this is just
+    surfacing the same list metroon already gates everything else by.
+    Empty, not an error, if metroon isn't configured to answer it (e.g. in
+    dev mode, or if PRAXIS_METROON_URL/PRAXIS_INTERNAL_SYNC_SECRET are unset)."""
+    metroon_url = os.environ.get("PRAXIS_METROON_URL", "")
+    secret = os.environ.get("PRAXIS_INTERNAL_SYNC_SECRET", "")
+    if not metroon_url or not secret:
+        return []
+    try:
+        res = httpx.get(
+            f"{metroon_url}/internal/directory",
+            headers={"X-Internal-Secret": secret},
+            timeout=5,
+        )
+        res.raise_for_status()
+        return res.json()
+    except httpx.HTTPError:
+        return []
 
 
 @app.get("/api/auth/config")
@@ -621,30 +726,40 @@ def logout(request: Request):
     return {"ok": True}
 
 
-@app.get("/auth/google/login")
-async def google_login(request: Request):
-    if AUTH_MODE != "google":
+@app.get("/auth/oidc/login")
+async def oidc_login(request: Request):
+    if AUTH_MODE != "oidc":
         raise HTTPException(404)
-    redirect_uri = str(request.url_for("google_callback"))
-    kwargs = {}
-    hosted_domain = os.environ.get("GOOGLE_HOSTED_DOMAIN")
-    if hosted_domain:
-        kwargs["hd"] = hosted_domain  # narrows Google's account chooser to this Workspace domain
-    return await oauth.google.authorize_redirect(request, redirect_uri, **kwargs)
+    redirect_uri = str(request.url_for("oidc_callback"))
+    return await oauth.oidc.authorize_redirect(request, redirect_uri)
 
 
-@app.get("/auth/google/callback")
-async def google_callback(request: Request):
-    if AUTH_MODE != "google":
+@app.get("/auth/oidc/callback")
+async def oidc_callback(request: Request):
+    if AUTH_MODE != "oidc":
         raise HTTPException(404)
-    token = await oauth.google.authorize_access_token(request)
-    userinfo = token.get("userinfo") or {}
+    token = await oauth.oidc.authorize_access_token(request)
+    # Not token.get("userinfo") — authlib only populates that from the ID
+    # token's own claims, and (per plain OIDC spec conformance, which
+    # metroon's oidc-provider library follows) an authorization_code flow's
+    # ID token omits scope-derived claims like email/email_verified; they're
+    # only guaranteed via the userinfo *endpoint*. Fetching it explicitly
+    # works regardless of what the provider puts in the ID token.
+    userinfo = await oauth.oidc.userinfo(token=token)
     email = userinfo.get("email")
     if not email or not userinfo.get("email_verified"):
-        return RedirectResponse(f"/?auth_error={quote('That Google account has no verified email.')}")
+        return RedirectResponse(f"/?auth_error={quote('That account has no verified email.')}")
     username = config.find_username_by_email(email)
     if not username:
-        return RedirectResponse(f"/?auth_error={quote(f'No praxis.md account is linked to {email} yet — ask an admin to add it to your profile.')}")
+        # Anyone who gets this far is already allowed through metroon, which
+        # gates every other agorae service the same way — so being allowed
+        # in is enough on its own, same as archeion/stoa auto-provisioning
+        # on first login. This account starts in zero projects/note bases;
+        # a project/kb admin adding them as a member is what gives it
+        # somewhere to actually work, not what gates login itself.
+        with git_store.LOCK:
+            username = config.provision_user_from_email(email)
+            git_store.commit_all(config.WORKSPACE_DIR, f"Provision {username}", username)
     request.session["user"] = username
     return RedirectResponse("/")
 
@@ -655,6 +770,32 @@ def update_my_profile(req: UserProfileRequest, user: str = Depends(get_current_u
         profile = config.set_user_profile(user, req.full_name, req.photo)
         git_store.commit_all(config.WORKSPACE_DIR, f"Update {user} profile", user)
     return {"username": user, **profile}
+
+
+class ProfileSyncRequest(BaseModel):
+    email: str
+    full_name: str | None = None
+    photo: str | None = None  # a data: URI, same shape as UserProfileRequest.photo
+
+
+# metroon's single profile-editing terminal (see docs/METROON.md) pushes name/
+# photo edits here so they land in praxis.md too, the same way it already
+# pushes them into Matrix and Forgejo. Keyed by email (not username) because
+# that's all metroon knows about a person; find_username_by_email maps it to
+# an existing account the same way OIDC login itself does — this never
+# creates one, only updates an account that's already a project/kb member.
+@app.post("/api/internal/profile-sync")
+def sync_profile_from_metroon(req: ProfileSyncRequest, request: Request):
+    secret = os.environ.get("PRAXIS_INTERNAL_SYNC_SECRET", "")
+    if not secret or request.headers.get("x-internal-secret") != secret:
+        raise HTTPException(401)
+    username = config.find_username_by_email(req.email)
+    if not username:
+        return {"synced": False}
+    with git_store.LOCK:
+        config.set_user_profile(username, req.full_name, req.photo)
+        git_store.commit_all(config.WORKSPACE_DIR, f"Update {username} profile (via metroon)", username)
+    return {"synced": True, "username": username}
 
 
 # --- global routes ---
@@ -674,7 +815,10 @@ def my_tasks(user: str = Depends(get_current_user)):
     """Tasks assigned to the current user, grouped by project — the Home
     view. A locked project is silently skipped rather than turning the
     whole dashboard into a password prompt for a project nobody asked to
-    open — its tasks reappear here on their own once someone unlocks it."""
+    open — its tasks reappear here on their own once someone unlocks it.
+    A personal project (GET /api/me/personal-project) that's never had a
+    task created in it yet just doesn't show up here — nothing to lose,
+    it's created lazily on first use, not eagerly on every Home load."""
     result = []
     for slug in config.list_projects():
         members = config.get_members(slug)
@@ -689,14 +833,38 @@ def my_tasks(user: str = Depends(get_current_user)):
             if item.get("type") == "task" and user in (item.get("assigned_to") or [])
         ]
         if assigned:
-            result.append({"project": slug, "tasks": assigned})
+            result.append({"project": slug, "name": config.get_project_name(slug), "tasks": assigned})
     return result
+
+
+@app.get("/api/me/personal-project")
+def my_personal_project(user: str = Depends(get_current_user)):
+    """The slug of the current user's own personal project (created on
+    first use if it doesn't exist yet) — lets the frontend post new
+    personal tasks straight from Home without that project ever showing up
+    in the regular project list (see list_projects/is_personal_project)."""
+    with git_store.LOCK:
+        slug = config.ensure_personal_project(user)
+        git_store.commit_all(config.WORKSPACE_DIR, f"Ensure personal project for {user}", user)
+    return {"slug": slug, "name": config.get_project_name(slug)}
+
+
+@app.post("/api/projects")
+def create_project(req: NewScopeRequest, user: str = Depends(get_current_user)):
+    if not req.name.strip():
+        raise HTTPException(400, "Name can't be empty.")
+    with git_store.LOCK:
+        slug = config.create_project(req.name.strip(), owner=user, icon=req.icon)
+        git_store.commit_all(config.WORKSPACE_DIR, f"Create project {slug}", user)
+    return {"slug": slug, "name": config.get_project_name(slug), "icon": config.get_project_icon(slug)}
 
 
 @app.get("/api/projects")
 def list_projects(user: str = Depends(get_current_user)):
     result = []
     for slug in config.list_projects():
+        if config.is_personal_project(slug):
+            continue
         members = config.get_members(slug)
         if members and user not in members:
             continue
@@ -707,6 +875,16 @@ def list_projects(user: str = Depends(get_current_user)):
             "members": members,
         })
     return result
+
+
+@app.post("/api/knowledge-bases")
+def create_kb(req: NewScopeRequest, user: str = Depends(get_current_user)):
+    if not req.name.strip():
+        raise HTTPException(400, "Name can't be empty.")
+    with git_store.LOCK:
+        slug = config.create_kb(req.name.strip(), owner=user, icon=req.icon)
+        git_store.commit_all(config.WORKSPACE_DIR, f"Create note base {slug}", user)
+    return {"slug": slug, "name": config.get_kb_name(slug), "icon": config.get_kb_icon(slug)}
 
 
 @app.get("/api/knowledge-bases")
@@ -751,6 +929,8 @@ def project_update_config(slug: str, req: ProjectConfigRequest, user: str = Depe
 
 @app.post("/api/projects/{slug}/members")
 def add_project_member(slug: str, req: MemberRequest, user: str = Depends(require_project_admin)):
+    if config.is_personal_project(slug):
+        raise HTTPException(400, "This is a personal project — nobody else can be added to it.")
     if req.role not in config.VALID_ROLES:
         raise HTTPException(400, f"Invalid role: {req.role!r} (must be one of {config.VALID_ROLES})")
     with git_store.LOCK:
@@ -762,15 +942,21 @@ def add_project_member(slug: str, req: MemberRequest, user: str = Depends(requir
         roles = config.set_member_role(slug, req.username, req.role)
         if was_open and user not in roles:
             roles = config.set_member_role(slug, user, "admin")
+        if req.email:
+            config.link_user_email(req.username, req.email)
         git_store.commit_all(config.WORKSPACE_DIR, f"Add {req.username} to {slug}", user)
+    _sync_project_collaborators_to_archeion(slug)
     return {"members": roles}
 
 
 @app.delete("/api/projects/{slug}/members/{username}")
 def remove_project_member(slug: str, username: str, user: str = Depends(require_project_admin)):
+    if config.is_personal_project(slug):
+        raise HTTPException(400, "This is a personal project — its only member can't be removed.")
     with git_store.LOCK:
         roles = config.remove_member(slug, username)
         git_store.commit_all(config.WORKSPACE_DIR, f"Remove {username} from {slug}", user)
+    _sync_project_collaborators_to_archeion(slug)
     return {"members": roles}
 
 
@@ -835,12 +1021,16 @@ def project_folders(slug: str, user: str = Depends(require_project_access)):
 
 @app.post("/api/projects/{slug}/folders")
 def project_create_folder(slug: str, req: FolderRequest, user: str = Depends(require_project_editor)):
-    return _create_folder(config.project_dir(slug), req, acting_user=user)
+    result = _create_folder(config.project_dir(slug), req, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Create folder {req.path}")
+    return result
 
 
 @app.put("/api/projects/{slug}/items/{item_id}/folder")
 def project_move_item(slug: str, item_id: str, req: MoveRequest, user: str = Depends(require_project_editor)):
-    return _move_item(config.project_dir(slug), item_id, req, acting_user=user)
+    result = _move_item(config.project_dir(slug), item_id, req, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Move {item_id}")
+    return result
 
 
 @app.get("/api/projects/{slug}/items")
@@ -855,27 +1045,44 @@ def project_get_item(slug: str, item_id: str, user: str = Depends(require_projec
 
 @app.post("/api/projects/{slug}/items")
 def project_create_item(slug: str, req: CreateRequest, user: str = Depends(require_project_editor)):
-    return _create_item(config.project_dir(slug), req, project_slug=slug, owner=user)
+    result = _create_item(config.project_dir(slug), req, project_slug=slug, owner=user)
+    _mirror_project_to_archeion(slug, user, f"Create {result['id']}")
+    return result
 
 
 @app.put("/api/projects/{slug}/items/{item_id}")
 def project_save_item(slug: str, item_id: str, req: SaveRequest, user: str = Depends(require_project_editor)):
-    return _save_item(config.project_dir(slug), item_id, req, acting_user=user)
+    result = _save_item(config.project_dir(slug), item_id, req, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Save {item_id}")
+    return result
 
 
 @app.put("/api/projects/{slug}/items/{item_id}/header")
 def project_save_header(slug: str, item_id: str, req: HeaderUpdateRequest, user: str = Depends(require_project_editor)):
-    return _save_header(config.project_dir(slug), item_id, req, acting_user=user)
+    result = _save_header(config.project_dir(slug), item_id, req, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Update {item_id} header")
+    return result
 
 
 @app.put("/api/projects/{slug}/items/{item_id}/owner")
 def project_transfer_owner(slug: str, item_id: str, req: TransferOwnerRequest, user: str = Depends(require_project_editor)):
-    return _transfer_owner(config.project_dir(slug), item_id, req, acting_user=user)
+    result = _transfer_owner(config.project_dir(slug), item_id, req, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Transfer {item_id} to {req.new_owner}")
+    return result
 
 
 @app.put("/api/projects/{slug}/items/{item_id}/filename")
 def project_rename_item(slug: str, item_id: str, req: RenameRequest, user: str = Depends(require_project_editor)):
-    return _rename_item_file(config.project_dir(slug), item_id, req, acting_user=user)
+    result = _rename_item_file(config.project_dir(slug), item_id, req, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Rename {item_id} to {req.filename}")
+    return result
+
+
+@app.delete("/api/projects/{slug}/items/{item_id}")
+def project_delete_item(slug: str, item_id: str, user: str = Depends(require_project_editor)):
+    result = _delete_item(config.project_dir(slug), item_id, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Delete {item_id}")
+    return result
 
 
 @app.get("/api/projects/{slug}/items/{item_id}/history")
@@ -885,7 +1092,9 @@ def project_item_history(slug: str, item_id: str, user: str = Depends(require_pr
 
 @app.post("/api/projects/{slug}/items/{item_id}/history/{sha}/restore")
 def project_item_restore(slug: str, item_id: str, sha: str, user: str = Depends(require_project_editor)):
-    return _restore_item(config.project_dir(slug), item_id, sha, acting_user=user)
+    result = _restore_item(config.project_dir(slug), item_id, sha, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Restore {item_id} to {sha[:8]}")
+    return result
 
 
 @app.post("/api/projects/{slug}/items/{item_id}/presence")
@@ -935,6 +1144,8 @@ def add_kb_member(slug: str, req: MemberRequest, user: str = Depends(require_kb_
         roles = config.set_kb_member_role(slug, req.username, req.role)
         if was_open and user not in roles:
             roles = config.set_kb_member_role(slug, user, "admin")
+        if req.email:
+            config.link_user_email(req.username, req.email)
         git_store.commit_all(config.WORKSPACE_DIR, f"Add {req.username} to {slug}", user)
     return {"members": roles}
 
@@ -1002,6 +1213,11 @@ def kb_transfer_owner(slug: str, item_id: str, req: TransferOwnerRequest, user: 
 @app.put("/api/knowledge-bases/{slug}/items/{item_id}/filename")
 def kb_rename_item(slug: str, item_id: str, req: RenameRequest, user: str = Depends(require_kb_editor)):
     return _rename_item_file(config.kb_dir(slug), item_id, req, acting_user=user)
+
+
+@app.delete("/api/knowledge-bases/{slug}/items/{item_id}")
+def kb_delete_item(slug: str, item_id: str, user: str = Depends(require_kb_editor)):
+    return _delete_item(config.kb_dir(slug), item_id, acting_user=user)
 
 
 @app.get("/api/knowledge-bases/{slug}/items/{item_id}/history")

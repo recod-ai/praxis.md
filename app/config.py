@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -192,6 +193,88 @@ def list_knowledge_bases() -> list[str]:
     return sorted(p.name for p in KNOWLEDGE_BASES_DIR.iterdir() if p.is_dir())
 
 
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    return slug or "untitled"
+
+
+def _unique_slug(base: str, existing: list[str]) -> str:
+    if base not in existing:
+        return base
+    n = 2
+    while f"{base}-{n}" in existing:
+        n += 1
+    return f"{base}-{n}"
+
+
+def create_project(name: str, owner: str, icon: str | None = None) -> str:
+    """A brand-new project — unlike an open (memberless) one, it starts with
+    the creator as its sole admin, so making one doesn't accidentally open
+    it to everyone; they can add members from its Settings panel afterward."""
+    slug = _unique_slug(_slugify(name), list_projects())
+    d = project_dir(slug)
+    (d / "tasks").mkdir(parents=True, exist_ok=True)
+    (d / "knowledge").mkdir(parents=True, exist_ok=True)
+    _write_project_config(slug, {
+        "name": name,
+        "icon": icon or DEFAULT_PROJECT_ICON,
+        "members": {owner: "admin"},
+    })
+    return slug
+
+
+PERSONAL_PROJECT_ICON = "person"
+
+
+def personal_project_slug(username: str) -> str:
+    return f"personal-{username}"
+
+
+def is_personal_project(slug: str) -> bool:
+    """A project flagged `personal: true` in its own project.yml — nobody
+    else is ever added to it (see main.py's add_project_member), and it's
+    left out of the regular project list (main.py's list_projects): it
+    lives inside Home instead (see ensure_personal_project), not alongside
+    real, multi-person projects."""
+    return bool(read_project_config(slug).get("personal"))
+
+
+def ensure_personal_project(username: str) -> str:
+    """Every account gets exactly one project nobody else belongs to, for
+    personal tasks/notes. Home's "my tasks" (main.py's my_tasks) is already
+    just an aggregation over every project a person is in, so this is most
+    of the feature: a project like any other, just one whose only member is
+    its owner and that's hidden from the regular project list/Members UI
+    (is_personal_project) — no separate "personal task" concept anywhere
+    else. Slug is derived straight from the username, so this is
+    idempotent: calling it again for the same person (e.g. on every
+    login/Home load) is a no-op once it exists."""
+    slug = personal_project_slug(username)
+    if slug not in list_projects():
+        d = project_dir(slug)
+        (d / "tasks").mkdir(parents=True, exist_ok=True)
+        (d / "knowledge").mkdir(parents=True, exist_ok=True)
+        _write_project_config(slug, {
+            "name": "Personal tasks",
+            "icon": PERSONAL_PROJECT_ICON,
+            "members": {username: "admin"},
+            "personal": True,
+        })
+    return slug
+
+
+def create_kb(name: str, owner: str, icon: str | None = None) -> str:
+    slug = _unique_slug(_slugify(name), list_knowledge_bases())
+    d = kb_dir(slug)
+    (d / "knowledge").mkdir(parents=True, exist_ok=True)
+    _write_kb_config(slug, {
+        "name": name,
+        "icon": icon or DEFAULT_KB_ICON,
+        "members": {owner: "admin"},
+    })
+    return slug
+
+
 # --- note base (standalone knowledge base) settings: name + members/roles —
 # a kb.yml next to a project's project.yml, same shape and same
 # permissive-when-unset philosophy (an empty/missing members list means
@@ -281,14 +364,20 @@ def _write_kb_config(slug: str, cfg: dict) -> None:
 
 
 def list_known_users() -> list[str]:
-    """Every username listed as a member of any project or note base —
-    powers the login dropdown. There's no separate user registry (yet);
-    project.yml/kb.yml membership is it."""
+    """Every username that's either a member of some project/note base, or
+    has its own profile file (workspace/users/<username>.yml) — the latter
+    covers a bare account auto-provisioned on first OIDC login (see
+    provision_user_from_email) that isn't part of anything yet. A profile
+    file is what makes someone "known" now; project.yml/kb.yml membership
+    only decides what they can *see*, not whether they can log in or show
+    up as a person (assignee, tag-chip, etc.) elsewhere."""
     users: set[str] = set()
     for slug in list_projects():
         users.update(get_members(slug))
     for slug in list_knowledge_bases():
         users.update(get_kb_members(slug))
+    if USERS_DIR.exists():
+        users.update(p.stem for p in USERS_DIR.iterdir() if p.suffix == ".yml")
     return sorted(users)
 
 
@@ -312,13 +401,41 @@ def set_user_profile(username: str, full_name: str | None, photo: str | None) ->
     return profile
 
 
+def link_user_email(username: str, email: str) -> dict:
+    """Links a username to the email its owner will log in with via OIDC
+    (see find_username_by_email/main.py's oidc_callback) — the missing half
+    of adding a project/kb member: membership grants access, this is what
+    lets that person's Google/metroon identity actually resolve to it.
+    Preserves any full_name/photo already on the profile, same
+    read-modify-write shape as set_user_profile."""
+    USERS_DIR.mkdir(parents=True, exist_ok=True)
+    profile = {**get_user_profile(username), "email": email.strip().lower()}
+    (USERS_DIR / f"{username}.yml").write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    return profile
+
+
+def provision_user_from_email(email: str) -> str:
+    """Auto-creates a bare account (no project/kb membership) for a
+    verified email logging into praxis.md for the first time — see main.py's
+    oidc_callback. Being allowed through metroon (which already gates every
+    other agorae service the same way) is enough on its own; a project/kb
+    admin adding someone as a member only decides what they can *see* once
+    they're in, same as archeion/stoa already auto-provision on first OIDC
+    login. Username mirrors Forgejo's own derivation (the email's local
+    part) so a person's identity looks the same across services."""
+    base = re.sub(r"[^a-z0-9._-]+", "-", email.split("@")[0].strip().lower()).strip("-.") or "user"
+    username = _unique_slug(base, list_known_users())
+    link_user_email(username, email)
+    return username
+
+
 def find_username_by_email(email: str) -> str | None:
-    """Maps a verified Google email (see main.py's /auth/google/callback) to
+    """Maps a verified OIDC email (see main.py's /auth/oidc/callback) to
     an existing username, via the `email:` field on that user's profile
     (workspace/users/<username>.yml — hand-editable like project.yml/kb.yml,
     same "files are the source of truth" spirit as the rest of this app).
-    Google login only ever authenticates an identity that's already a
-    member of something; it never creates an account on its own."""
+    Doesn't provision anything itself — see provision_user_from_email for
+    what happens when this comes back empty."""
     email = (email or "").strip().lower()
     if not email:
         return None

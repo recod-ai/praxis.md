@@ -408,13 +408,18 @@ select {
 
 .nav-section { margin-top: 6px; }
 .nav-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--on-surface-variant);
-  padding: 6px 10px 2px;
+  padding: 6px 6px 2px 10px;
 }
+.nav-section-title button.btn-icon { width: 22px; height: 22px; }
+.nav-section-title button.btn-icon .material-symbols-outlined { font-size: 16px; }
 .nav-subitem { padding-left: 22px; font-weight: 400; font-size: 13px; }
 .nav-empty { padding: 4px 10px; font-size: 12px; color: var(--on-surface-variant); font-style: italic; }
 
@@ -549,6 +554,7 @@ select {
 .board-view { display: flex; flex-direction: column; gap: 8px; }
 .board-view[hidden] { display: none; }
 
+#home-add-personal-task { margin-bottom: 20px; }
 .home-project-group { margin-bottom: 20px; }
 .home-project-group h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); margin: 0 0 8px; }
 
@@ -812,23 +818,50 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
   border-color: color-mix(in srgb, currentColor 35%, transparent);
 }
 
+/* A left-hand sidebar instead of a full-width strip above the content —
+   the header used to push the actual note/task down before a reader saw
+   any of it; as a narrower column beside #panes it stays visible without
+   costing vertical space. 25/75 by default, but #editor-resizer lets
+   anyone drag that split — see app.js, which also remembers whatever they
+   last set (localStorage) and re-applies it as inline `flex-basis`,
+   overriding the percentage below. */
+#editor-body { flex: 1; display: flex; min-height: 0; }
 #header-panel {
+  flex: 0 0 25%;
+  min-width: 180px;
+  max-width: 60%;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   background: var(--surface-alt);
+  overflow-y: auto;
 }
 #header-panel[hidden] { display: none; }
-.header-field { display: flex; align-items: center; gap: 12px; padding: 6px; border-radius: var(--shape-sm); }
+#header-panel[hidden] + #editor-resizer { display: none; }
+
+#editor-resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+#editor-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: var(--border);
+}
+#editor-resizer:hover::after, #editor-resizer.dragging::after { background: var(--primary); }
+.header-field { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px; border-radius: var(--shape-sm); }
 .header-field[hidden] { display: none; }
 .header-field:hover { background: var(--surface); }
-.header-field > label { width: 100px; flex-shrink: 0; font-size: 12px; color: var(--on-surface-variant); }
+.header-field > label { flex-shrink: 0; font-size: 12px; color: var(--on-surface-variant); }
 .header-field select, .header-field > input { font-size: 13px; }
-#header-status, #header-due-date { max-width: 220px; }
+#header-status, #header-due-date { max-width: 100%; width: 100%; }
 #header-owner { display: flex; align-items: center; gap: 6px; }
-#header-save-status { font-size: 11px; color: var(--on-surface-variant); padding-left: 112px; }
+#header-save-status { font-size: 11px; color: var(--on-surface-variant); }
 
 .chip-field-wrap { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -890,8 +923,8 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 #header-assigned-add:hover { background-color: color-mix(in srgb, var(--on-surface) 6%, transparent); border-color: transparent; }
 #header-assigned-add:focus { background-color: var(--surface); }
 
-#header-parent-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
-#header-parent-select { max-width: 240px; }
+#header-parent-wrap { flex: 1; display: flex; align-items: center; gap: 8px; width: 100%; }
+#header-parent-select { max-width: 100%; flex: 1; min-width: 0; }
 #header-parent-open { font-size: 12px; padding: 4px 10px; }
 
 #header-children-wrap { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
@@ -935,6 +968,25 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 }
 .ref-picker-row:hover { background: var(--surface-alt); }
 .ref-picker-row .ref-picker-id { color: var(--on-surface-variant); font-size: 11px; }
+
+/* --- reusable "type to find a person" combobox (app.js attachUserPicker)
+   — one artifact behind add-member, assigned-to, and transfer-ownership,
+   so all three feel and behave the same way --- */
+.user-picker-menu {
+  position: fixed;
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--shape-sm);
+  box-shadow: var(--elevation-3);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.user-picker-option { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+.user-picker-option .avatar { width: 20px; height: 20px; font-size: 10px; flex-shrink: 0; }
+.user-picker-option:hover, .user-picker-option.active { background: var(--surface-alt); }
+.user-picker-option .muted { font-size: 11px; }
+.user-picker-empty { padding: 8px 10px; font-size: 12px; color: var(--on-surface-variant); }
 
 #panes { flex: 1; display: flex; min-height: 0; }
 #editor-pane, #preview-pane { flex: 1; min-width: 0; overflow: auto; }

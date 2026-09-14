@@ -36,6 +36,14 @@ workspace/
 A project owns **tasks** and **project-scoped knowledge**. Access is
 restricted to the project's members.
 
+Created via the **+** next to "Projects" in the sidebar (`POST /api/projects`,
+just a name) — unlike a project with no `members:` configured (open to
+anyone, see below), a *newly created* one starts with its creator as its
+sole admin, so making one doesn't accidentally hand it to everyone; more
+members get added from its Settings panel afterward. The slug is derived
+from the name (lowercased, non-alphanumeric runs collapsed to `-`), with a
+numeric suffix if that slug's already taken.
+
 `project.yml`:
 
 ```yaml
@@ -97,6 +105,9 @@ permissive-when-unset roles model a project uses (§ Roles above): open to
 anyone (acting as `admin`) until real members are listed, at which point
 it narrows to exactly that list. This used to be a hardcoded "always open,
 no config" policy; now that's just the *default state* of a real one.
+Created the same way a project is (the **+** next to "Note Bases",
+`POST /api/knowledge-bases`) — see Projects above for the slug and
+creator-as-first-admin details, identical here.
 Reachable through its own **Settings** entry in the nav (next to
 **Notes**), which holds both the member list and:
 
@@ -224,9 +235,14 @@ items can also be created **without** a template, with a free-form body.
 
 ### `templates/knowledge/{experiment,lit_review,report,paper_draft}.md`
 
-Not defined yet — specific sections stay open until there's real need to
-use them. `paper_draft` is a markdown draft even though the final version
-will most likely ship as LaTeX.
+Each a lightweight section skeleton, same spirit as the task template
+above (a heading list to fill in, no prose): `experiment` (Objective,
+Setup, Procedure, Results, Analysis, Next steps), `lit_review` (Citation,
+Summary, Key claims, Methodology, Relevance to our work, Open questions),
+`report` (Summary, Context, Findings, Caveats and limitations,
+Recommendations), `paper_draft` (Abstract, Introduction, Related work,
+Methods, Results, Discussion, Conclusion — a markdown draft even though
+the final version will most likely ship as LaTeX).
 
 ## Permissions
 
@@ -627,8 +643,6 @@ instead of being silently discarded.
 
 ## Open items
 
-- Sections for the knowledge templates: `experiment`, `lit_review`,
-  `report`, `paper_draft` (not yet created under `templates/knowledge/`).
 - No remote/push — version history is local to this machine's
   `workspace/.git`, there's no notion of syncing it anywhere else yet.
 - Presence and the event bus are in-process, single-worker state
@@ -637,7 +651,10 @@ instead of being silently discarded.
 - History/restore covers the body only, not header fields (tags, status,
   assigned_to/parent) — those aren't versioned back-and-forth yet, only
   ever overwritten going forward.
-- Real authentication — login is a dropdown with no password check;
+- `PRAXIS_AUTH_MODE=dev` (the default) is still a no-password dropdown —
   everything above (owner/assigned_to/project membership) trusts whoever
-  the session says is logged in, but nothing verifies that claim at
-  login time.
+  the session says is logged in, with nothing verifying that claim. Real
+  identity verification exists (`PRAXIS_AUTH_MODE=google`, see the README),
+  but is opt-in, not the default.
+- No delete for a project, note base, task, or note — only creation,
+  editing, and (for a task/note's body) restoring an earlier version.

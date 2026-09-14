@@ -74,6 +74,15 @@ def reindex_item(scope_dir: Path, path: Path) -> None:
     conn.commit()
 
 
+def remove_item(scope_dir: Path, item_id: str) -> None:
+    """Drops one item's row after its file has already been deleted from
+    disk (see main.py's _delete_item) — the index is purely a cache, so
+    this never needs to touch git/storage itself."""
+    conn = _connection()
+    conn.execute("DELETE FROM items WHERE scope_dir = ? AND id = ?", (str(scope_dir), item_id))
+    conn.commit()
+
+
 def rebuild_scope(scope_dir: Path) -> None:
     conn = _connection()
     conn.execute("DELETE FROM items WHERE scope_dir = ?", (str(scope_dir),))
