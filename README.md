@@ -2,8 +2,11 @@
 
 Science-focused task and knowledge manager — markdown + YAML as the
 organizing format, on the same premise as
-[taskmd](https://github.com/taskmd/taskmd). Runs locally, not depending on
-`agorae` (Oracle Cloud) for now.
+[taskmd](https://github.com/taskmd/taskmd). Runs standalone (see "Running"
+below) or deployed as part of the `agorae` lab (see
+[agorae/docs/PRAXIS.md](https://github.com/recod-ai/agorae/blob/main/docs/PRAXIS.md)
+for that deployment's specifics — domain, OIDC client, archeion mirroring
+credentials).
 
 Full design in [docs/design/schema.md](docs/design/schema.md).
 
@@ -11,12 +14,20 @@ Full design in [docs/design/schema.md](docs/design/schema.md).
 
 Working skeleton: API (FastAPI) + side-by-side editor (CodeMirror + preview,
 with math via KaTeX) + Kanban view for tasks, serving multiple **projects**
-and standalone **knowledge bases** under `workspace/`. Session-based login
-(dropdown of known users, signed cookie via Starlette's `SessionMiddleware`)
-— but **still no password**, so this is session management, not real
-authentication (see docs/design/schema.md#login). No SQLite yet (the schema
-allows adding it later without changing the file format — see
-docs/design/schema.md#index).
+and standalone **knowledge bases** under `workspace/`. A SQLite index
+(`app/index.py`, rebuilt from the `.md` files on startup, queried
+throughout the API) makes lookups by id fast — but it's a cache, not a
+second source of truth: `app/storage.py`'s file-scanning functions remain
+the ground truth per schema.md's rule ("nothing may exist only in the
+database"), and the index can always be rebuilt from the files alone.
+Session-based login (dropdown of known users, signed cookie via
+Starlette's `SessionMiddleware`) for local dev — but **still no
+password**, so on its own that's session management, not real
+authentication (see docs/design/schema.md#login and "Real login (OIDC)"
+below for the real thing). Also has per-project encryption (see
+"Encrypting a project" below) and, in deployments that configure it,
+mirrors every unencrypted project's content to a read-only Forgejo repo
+(see "Archeion mirroring" below).
 
 ## Running
 
@@ -111,6 +122,21 @@ used, and resealed automatically after a period of inactivity —
 about the project except its actual task/note content — name, icon,
 members — stays in plain `project.yml`, unaffected.
 
+### Archeion mirroring
+
+If `PRAXIS_ARCHEION_URL` and friends are set (see `.env.example` — org, bot
+account, and a separate admin account for managing collaborators), every
+save to an **unencrypted** project pushes its current `tasks/`/`knowledge/`
+content to a dedicated repo under a Forgejo org, as a second, read-only
+record (`app/archeion_mirror.py`) — independent of praxis.md's own internal
+git history (`app/git_store.py`), which stays unexposed. Project members
+are synced there as read-only collaborators, never given write access.
+Encrypted projects are never mirrored — the whole point of encrypting one
+is keeping it off any second copy. See
+[agorae/docs/PRAXIS.md](https://github.com/recod-ai/agorae/blob/main/docs/PRAXIS.md)
+for how the org/bot account itself gets set up (a one-time manual step,
+not something this app provisions on its own).
+
 ## Workspace layout
 
 ```
@@ -142,10 +168,14 @@ workspace/
 ## Structure
 
 ```
-app/            FastAPI: routes, storage (reading/writing .md), permissions
+app/            FastAPI: routes, storage (reading/writing .md), the SQLite
+                index, permissions, vault (encryption), archeion mirroring
 static/         frontend (CodeMirror + preview + Kanban, no build step)
-templates/      seed files (task/research_question.md so far)
+templates/      seed files (task/knowledge templates)
 workspace/      example projects + knowledge bases served by default
+docs/design/    schema.md (file format/permissions reference) + other
+                design notes — see docs/_archive/ for superseded ones
 pyproject.toml  dependencies (uv) — see Running
+Dockerfile      how agorae (or any deployment) containerizes this
 .env.example    template for real secrets — copy to .env, never committed
 ```

@@ -297,17 +297,26 @@ Two modes, picked with `PRAXIS_AUTH_MODE` (`app/main.py`):
   `/api/login`, no password. **Session management, not authentication** —
   there's nothing verifying the person picking "mrai" from the dropdown is
   actually mrai. Meant for local development/testing only.
-- **`google`**: real OAuth2 against Google (via `authlib`), the real auth
-  this doc used to describe as a later step. `/auth/google/login` and
-  `/auth/google/callback` do the actual redirect/token exchange (an
-  optional `GOOGLE_HOSTED_DOMAIN` narrows Google's account picker to one
-  Workspace domain); the verified email is mapped to an existing username
-  via that user's `email:` profile field (`config.find_username_by_email`)
-  — a Google identity with no matching email is refused, not
-  auto-registered. Login only ever *authenticates* an identity; membership
-  (`members:` in `project.yml`/`kb.yml`) is still the only thing that
-  grants access to anything, exactly as in `dev` mode. `/api/login` itself
-  is disabled (404) in this mode, so the dev path can't be used to bypass it.
+- **`oidc`**: real OAuth2/OIDC against *any* discovery-URL-based provider
+  (via `authlib`) — generalized from an earlier Google-specific `google`
+  mode (see the README's "Real login (OIDC)"; in `agorae`'s own deployment
+  the provider is `metroon`, not Google directly). `/auth/oidc/login` and
+  `/auth/oidc/callback` do the actual redirect/token exchange; the
+  verified email is mapped to an existing username via that user's
+  `email:` profile field (`config.find_username_by_email`) — but unlike
+  this doc's earlier description, a verified email with **no** matching
+  username is no longer refused: `config.provision_user_from_email`
+  auto-provisions a bare account for it (username derived from the
+  email's local part), same as archeion/stoa already do in `agorae`'s
+  deployment. That account starts in zero projects/note bases — being
+  authenticated is not, by itself, membership in anything; adding someone
+  as a member ahead of time (with an `email` alongside their `username`)
+  is what lands them inside a specific project/note base on first login
+  instead of starting with none. Login only ever *authenticates* an
+  identity; membership (`members:` in `project.yml`/`kb.yml`) is still the
+  only thing that grants access to anything, exactly as in `dev` mode.
+  `/api/login` itself is disabled (404) in this mode, so the dev path
+  can't be used to bypass it.
 
 Either way, the server remembers you via a signed session cookie
 (Starlette's `SessionMiddleware`) for the rest of the requests —
@@ -315,7 +324,7 @@ Either way, the server remembers you via a signed session cookie
 reads the acting user off the session. `/api/logout` clears it.
 
 **Profile**: a username is still the only identity that matters for
-permissions/membership — full name, photo, and (for `google` mode) email
+permissions/membership — full name, photo, and (for `oidc` mode) email
 are self-edited (`PUT /api/users/me/profile`; email itself is set by
 hand-editing the profile file, not through that form — see
 `config.find_username_by_email`'s docstring) and there's no way to edit
@@ -624,12 +633,13 @@ Two kinds of event travel over it:
 
 **Role-based responses.** `GET .../items/{id}` (`_get_item` in main.py)
 returns a `permissions` object — `can_edit_body`, `can_edit_header`,
-`can_rename`, `can_transfer_owner`, `can_move` — computed the same way the
-mutating routes themselves decide whether to 403/409, not re-derived on
-the client. The frontend hides or disables a button from this rather than
-guessing from role + owner comparisons itself, so a button can never
-promise something the API would then refuse. (There's no `can_delete`:
-this app has no delete endpoint for an item at all yet, for any user.)
+`can_rename`, `can_transfer_owner`, `can_move`, `can_delete` (the last
+gated on scope-edit access plus being the item's owner, same as rename/
+transfer) — computed the same way the mutating routes themselves decide
+whether to 403/409, not re-derived on the client. The frontend hides or
+disables a button from this rather than guessing from role + owner
+comparisons itself, so a button can never promise something the API would
+then refuse.
 
 **Audit / restore.** `GET .../items/{id}/history` lists every commit that
 touched that item (sha, author, date, message — from `git_store.file_history`,
@@ -640,6 +650,22 @@ rewriting history, so it goes through the exact same permission check and
 concurrent-edit safety net as any other save — someone else's edit made
 after the version being restored from still merges or conflicts normally
 instead of being silently discarded.
+
+## Archeion mirroring (`app/archeion_mirror.py`)
+
+A separate, optional record of every **unencrypted** project's current
+content, kept in a Forgejo repo — distinct from the git history described
+above (`workspace/.git`, which stays wherever the app runs and is never
+pushed anywhere). Every save/create/rename/transfer/restore/delete/move
+that touches an unencrypted project re-syncs its own dedicated mirror
+repo: copies its current `tasks/`/`knowledge/` into a separate local clone
+and commits+pushes that, plus keeps the mirror repo's collaborator list
+(read-only) in sync with the project's own `members:`. An encrypted
+project (see Encryption above) is never mirrored — `has_vault(slug)` is
+checked first and skips entirely, since the point of encrypting a project
+is keeping it off any second copy. Configured entirely by environment
+variables (`PRAXIS_ARCHEION_*`, see `.env.example`) — unset, this quietly
+no-ops, same as the OIDC/metroon integration above.
 
 ## Open items
 
@@ -654,7 +680,5 @@ instead of being silently discarded.
 - `PRAXIS_AUTH_MODE=dev` (the default) is still a no-password dropdown —
   everything above (owner/assigned_to/project membership) trusts whoever
   the session says is logged in, with nothing verifying that claim. Real
-  identity verification exists (`PRAXIS_AUTH_MODE=google`, see the README),
+  identity verification exists (`PRAXIS_AUTH_MODE=oidc`, see the README),
   but is opt-in, not the default.
-- No delete for a project, note base, task, or note — only creation,
-  editing, and (for a task/note's body) restoring an earlier version.
