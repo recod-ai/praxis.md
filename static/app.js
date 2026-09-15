@@ -181,6 +181,18 @@ const currentUserAvatar = document.getElementById("current-user-avatar");
 let sessionUser = null;
 let userProfiles = {}; // username -> {username, full_name, photo} — see loadUserProfiles
 let authMode = "dev"; // "dev" (dropdown, no password) or "oidc" (real OAuth2/OIDC) — see /api/auth/config
+let metroonProfileUrl = null; // set alongside authMode — see loadAuthConfig
+
+// Fetched once up front (checkSession, below) rather than only inside
+// showLoginScreen — a resumed session skips that path entirely, but the
+// profile dialog still needs to know authMode/metroonProfileUrl even then.
+async function loadAuthConfig() {
+  const res = await fetch("/api/auth/config");
+  if (!res.ok) return;
+  const data = await res.json();
+  authMode = data.mode;
+  metroonProfileUrl = data.metroon_profile_url || null;
+}
 
 function currentUser() {
   return sessionUser || "";
@@ -212,9 +224,6 @@ if (authErrorFromUrl) {
 }
 
 async function showLoginScreen() {
-  const modeRes = await fetch("/api/auth/config");
-  authMode = modeRes.ok ? (await modeRes.json()).mode : "dev";
-
   if (authMode === "oidc") {
     loginSelectLabel.hidden = true;
     loginSubmitBtn.hidden = true;
@@ -271,6 +280,7 @@ async function onLoggedIn() {
 }
 
 async function checkSession() {
+  await loadAuthConfig();
   const res = await fetch("/api/session");
   const data = await res.json();
   if (data.user) {
@@ -289,6 +299,10 @@ const profileFullName = document.getElementById("profile-full-name");
 const profilePhotoInput = document.getElementById("profile-photo-input");
 const profilePhotoPreview = document.getElementById("profile-photo-preview");
 const profileRemovePhotoBtn = document.getElementById("profile-remove-photo");
+const profileEditableFields = document.getElementById("profile-editable-fields");
+const profileMetroonNote = document.getElementById("profile-metroon-note");
+const profileMetroonLink = document.getElementById("profile-metroon-link");
+const profileSaveBtn = document.getElementById("profile-save-btn");
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // keeps each user's profile .yml small
 
 let pendingPhotoDataUri = null; // full-replace, like the header form: preloaded with the current value, resent as-is unless changed
@@ -299,11 +313,23 @@ function renderPhotoPreview() {
 }
 
 document.getElementById("edit-profile-btn").addEventListener("click", () => {
-  const profile = userProfiles[currentUser()] || {};
-  profileFullName.value = profile.full_name || "";
-  pendingPhotoDataUri = profile.photo || null;
-  profilePhotoInput.value = "";
-  renderPhotoPreview();
+  // In oidc mode, name/photo are only editable in metroon (see
+  // docs/METROON.md) — swap the editable fields for a link there instead
+  // of pretending a local edit would stick (metroon's own push is what
+  // actually updates userProfiles, via /api/internal/profile-sync).
+  const managedByMetroon = authMode === "oidc" && metroonProfileUrl;
+  profileEditableFields.hidden = managedByMetroon;
+  profileMetroonNote.hidden = !managedByMetroon;
+  profileSaveBtn.hidden = managedByMetroon;
+  if (managedByMetroon) {
+    profileMetroonLink.href = metroonProfileUrl;
+  } else {
+    const profile = userProfiles[currentUser()] || {};
+    profileFullName.value = profile.full_name || "";
+    pendingPhotoDataUri = profile.photo || null;
+    profilePhotoInput.value = "";
+    renderPhotoPreview();
+  }
   profileDialog.showModal();
 });
 

@@ -60,14 +60,19 @@
   <dialog id="profile-dialog">
     <form id="profile-form">
       <h2 style="margin:0">Settings</h2>
-      <label>Full name
-        <input type="text" id="profile-full-name" placeholder="e.g. Marcos Rai" />
-      </label>
-      <label>Photo
-        <input type="file" id="profile-photo-input" accept="image/*" />
-      </label>
-      <div id="profile-photo-preview"></div>
-      <button type="button" id="profile-remove-photo" hidden>Remove photo</button>
+      <div id="profile-editable-fields">
+        <label>Full name
+          <input type="text" id="profile-full-name" placeholder="e.g. Marcos Rai" />
+        </label>
+        <label>Photo
+          <input type="file" id="profile-photo-input" accept="image/*" />
+        </label>
+        <div id="profile-photo-preview"></div>
+        <button type="button" id="profile-remove-photo" hidden>Remove photo</button>
+      </div>
+      <p id="profile-metroon-note" hidden>
+        Your name and photo are managed in <a id="profile-metroon-link" target="_blank" rel="noopener">metroon</a>.
+      </p>
       <div class="settings-row">
         <span>Theme</span>
         <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme"><span class="material-symbols-outlined" aria-hidden="true">dark_mode</span> Dark</button>
@@ -76,7 +81,7 @@
         <button type="button" id="logout-btn">Log out</button>
         <span class="dialog-actions-spacer"></span>
         <button type="button" id="profile-cancel">Cancel</button>
-        <button type="submit" class="btn-primary">Save</button>
+        <button type="submit" id="profile-save-btn" class="btn-primary">Save</button>
       </div>
     </form>
   </dialog>

@@ -108,6 +108,15 @@ Google directly. What real login takes, end to end:
 4. `uv run uvicorn app.main:app --reload` (or however it's actually
    deployed) — `.env` is picked up automatically.
 
+In `oidc` mode, name/photo editing itself moves out of praxis.md entirely:
+`PUT /api/users/me/profile` 404s, and the Settings dialog links out to the
+OIDC provider's own profile page instead of showing those fields (see
+`PRAXIS_METROON_PUBLIC_URL` — optional, only meaningful in agorae's own
+deployment, where that page is metroon's `/profile`; see
+`agorae/docs/METROON.md`, "Profile editing is locked to metroon"). Edits
+still land here the same way they always did — pushed in via
+`POST /api/internal/profile-sync` — just never typed here directly anymore.
+
 ### Encrypting a project
 
 A project's Settings panel (the gear next to its name) has an

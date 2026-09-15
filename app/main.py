@@ -704,7 +704,16 @@ def directory(user: str = Depends(get_current_user)):
 
 @app.get("/api/auth/config")
 def auth_config():
-    return {"mode": AUTH_MODE}
+    # In oidc mode, name/photo are only editable in metroon (see
+    # docs/METROON.md and update_my_profile below) — this tells the
+    # frontend where to send someone instead of showing its own fields.
+    # PRAXIS_METROON_PUBLIC_URL is the browser-reachable one (unlike
+    # PRAXIS_METROON_URL, used server-to-server by /api/directory above).
+    metroon_url = os.environ.get("PRAXIS_METROON_PUBLIC_URL", "")
+    return {
+        "mode": AUTH_MODE,
+        "metroon_profile_url": f"{metroon_url}/profile" if AUTH_MODE == "oidc" and metroon_url else None,
+    }
 
 
 @app.get("/api/session")
@@ -766,6 +775,11 @@ async def oidc_callback(request: Request):
 
 @app.put("/api/users/me/profile")
 def update_my_profile(req: UserProfileRequest, user: str = Depends(get_current_user)):
+    # In oidc mode, metroon is the only place name/photo can be edited —
+    # its own profile-sync push (below) is what updates them here. Same
+    # dev-only shape as /api/login above.
+    if AUTH_MODE == "oidc":
+        raise HTTPException(404)
     with git_store.LOCK:
         profile = config.set_user_profile(user, req.full_name, req.photo)
         git_store.commit_all(config.WORKSPACE_DIR, f"Update {user} profile", user)
