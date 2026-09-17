@@ -22,13 +22,17 @@ workspace/
   .praxis-index.db       # SQLite cache, git-ignored, rebuilt from the files at startup — see Index
   projects/
     <project-slug>/
-      project.yml       # members, statuses — see Projects
+      project.yml       # members, statuses, status_colors — see Projects
       tasks/
       knowledge/
       # an *encrypted* project (see Encryption) has vault.enc here instead
       # of tasks/knowledge/ — those only exist in a live, unlocked copy
   knowledge-bases/
     <kb-slug>/           # standalone, not tied to any project — see Standalone knowledge bases
+  users/
+    <username>.yml       # optional profile: full_name, photo, email — see Login
+  templates/
+    task/, knowledge/    # editable starter files — see Templates
 ```
 
 ## Projects
@@ -195,10 +199,14 @@ point at the id, not the path.
 ## Templates
 
 A template is a **pre-organized file**, not an enum value baked into the
-code — lives under something like:
+code — lives under `workspace/templates/` (`config.TEMPLATES_DIR`,
+`GET/PUT /api/templates/{type}/{name}`), not the app's own source tree,
+seeded once from a shipped starter set the first time each is missing
+(`config.ensure_default_templates`, idempotent — never overwrites one
+someone already edited or added):
 
 ```
-templates/
+workspace/templates/
   task/
     research_question.md
   knowledge/
@@ -209,13 +217,21 @@ templates/
 ```
 
 Creation flow: **Create → Task → Research Question** copies the content of
-`templates/task/research_question.md` (the structured sections) into the
-new file's body — it's just a starting point. No record of which template
-was used is kept on the created file (no `template:` field, no trace at
-all) — once created, it's a task/knowledge item like any other. What's
-inside a template is defined by the file itself under `templates/`,
-editable by anyone, not something fixed in the tool. Tasks and knowledge
-items can also be created **without** a template, with a free-form body.
+`workspace/templates/task/research_question.md` (the structured sections)
+into the new file's body — it's just a starting point. No record of which
+template was used is kept on the created file (no `template:` field, no
+trace at all) — once created, it's a task/knowledge item like any other.
+Tasks and knowledge items can also be created **without** a template, with
+a free-form body.
+
+**Editable from the app itself**, not just by hand on disk: the "New item"
+dialog's template picker has a pencil icon (edit the selected template) and
+a "+" (create a new one for the current type), both opening the same
+plain-textarea editor dialog over `GET`/`PUT /api/templates/{type}/{name}`.
+Global, not scoped to a project/kb — same trust level the rest of this app
+already gives any logged-in member (there's no site-admin concept anywhere
+else to gate it behind instead) — and, being under `workspace/`, every edit
+is a real git commit like everything else here.
 
 ### `templates/task/research_question.md`
 
@@ -432,9 +448,20 @@ through the app (`GET`/`POST .../folders`, `_list_folders`/`_create_folder`
 in main.py). `storage.all_files` already scans recursively, so nesting a
 note under a folder needs no change there; the folder a note lives in is
 just its path relative to `knowledge/`, computed server-side per item
-(`""` = root). Creating a note while browsing a folder places it there;
-there's no drag-to-move between folders yet (a natural follow-up, not
-built this round).
+(`""` = root). Creating a note while browsing a folder places it there.
+Moving one is drag-and-drop, same owner-only rule as everything else
+note-specific (`PUT .../items/{id}/folder`, `makeNoteDraggable` — a note
+that isn't yours just isn't draggable) — dropping on a folder tile, a
+breadcrumb segment, or the "back" button all call the same endpoint.
+
+**Deleting a folder** (`DELETE .../folders/{path}`) removes it and
+everything inside it — notes and any nested subfolders — but only when
+the acting user owns *every* note in that subtree; one note that isn't
+theirs blocks the whole delete (all-or-nothing, checked up front, not a
+partial delete that orphans someone else's note). A note can never be
+another item's `parent` (see _check_parent_is_task under Task), so unlike
+deleting a single item, there's no "still referenced elsewhere" case to
+guard here.
 
 Two ways to browse them, Drive-style:
 
@@ -470,6 +497,16 @@ Default if the file doesn't exist or doesn't have that key:
 ```
 proposal → backlog → ready → in_progress → review → done
 ```
+
+**Color** is a separate, optional per-status override (`status_colors:` in
+`project.yml`, `config.status_color`/`set_status_color`) — a status with
+no override falls back to a curated pastel default (cycled by its position
+in `statuses:`, reusing this app's own primary/secondary/tertiary container
+tones where a hue already exists — see `config.DEFAULT_STATUS_COLOR_PALETTE`
+and `static/style.css`'s Material 3 palette). Shown as the Kanban column's
+header background and as the status badge on every card; changing it is a
+small `<input type="color">` next to each column header, admin-only
+(`PUT .../statuses/{status}/color`, same gate as renaming the project).
 
 ## Tags
 

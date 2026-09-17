@@ -13,8 +13,11 @@ Full design in [docs/design/schema.md](docs/design/schema.md).
 ## Status
 
 Working skeleton: API (FastAPI) + side-by-side editor (CodeMirror + preview,
-with math via KaTeX) + Kanban view for tasks, serving multiple **projects**
-and standalone **knowledge bases** under `workspace/`. A SQLite index
+with math via KaTeX) + Kanban view for tasks (each status gets its own
+color — a pastel default, overridable per project) + real folders for
+notes (drag-and-drop to move, delete-if-you-own-everything-inside) +
+templates editable from the app itself, serving multiple **projects** and
+standalone **knowledge bases** under `workspace/`. A SQLite index
 (`app/index.py`, rebuilt from the `.md` files on startup, queried
 throughout the API) makes lookups by id fast — but it's a cache, not a
 second source of truth: `app/storage.py`'s file-scanning functions remain
@@ -180,7 +183,10 @@ workspace/
 app/            FastAPI: routes, storage (reading/writing .md), the SQLite
                 index, permissions, vault (encryption), archeion mirroring
 static/         frontend (CodeMirror + preview + Kanban, no build step)
-templates/      seed files (task/knowledge templates)
+templates/      shipped starter templates — seeded once into
+                workspace/templates/ (the live, editable, git-versioned
+                copy; see docs/design/schema.md#templates), never read
+                from directly at runtime again after that
 workspace/      example projects + knowledge bases served by default
 docs/design/    schema.md (file format/permissions reference) + other
                 design notes — see docs/_archive/ for superseded ones

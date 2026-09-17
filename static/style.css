@@ -500,6 +500,7 @@ select {
    consistent family of square boxes, distinguished only by icon/content,
    not by different box styles. */
 .notes-tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   aspect-ratio: 1;
@@ -542,6 +543,24 @@ select {
 }
 .notes-tile-folder .notes-tile-icon { font-size: 34px; }
 .notes-tile-folder .notes-tile-name { font-size: 12.5px; }
+.notes-tile .row-delete-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--surface-1);
+}
+
+/* Same dense-inline-control exemption as .nav-section-title's gear/+
+   buttons (see .btn-icon's own comment) — a folder/note row/tile is too
+   small for a 48dp target. margin-left: auto only does anything in the
+   (flex) list row; harmless no-op in the (absolutely-positioned) grid
+   tile. Hidden until the row/tile is hovered — a delete icon sitting
+   there permanently would compete with the item's own name for attention.
+   Shared by folders and notes alike — owner-only deletion either way, see
+   main.py's _delete_folder / _delete_item. */
+.row-delete-btn { width: 22px; height: 22px; margin-left: auto; flex-shrink: 0; opacity: 0; }
+.row-delete-btn .material-symbols-outlined { font-size: 16px; }
+.notes-table-row:hover .row-delete-btn, .notes-tile:hover .row-delete-btn { opacity: 1; }
 
 /* --- main / board views --- */
 
@@ -660,13 +679,46 @@ select {
   padding: 10px;
 }
 .kanban-column.drag-over { outline: 2px dashed var(--primary); outline-offset: -4px; }
-.kanban-column h3 {
-  margin: 0 0 8px;
+/* background/color come from the status's own color (config.status_color,
+   inline style — see renderKanban) rather than a fixed token, since each
+   project picks its own per-status palette */
+.kanban-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: -10px -10px 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.kanban-column-header h3 {
+  margin: 0;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--on-surface-variant);
+  font-weight: 700;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+/* a small circular native color input doubling as the swatch itself — no
+   custom popover to build, the browser's own picker opens on click */
+.status-color-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 50%;
+  cursor: pointer;
+  background: none;
+}
+.status-color-input::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
+.status-color-input::-webkit-color-swatch { border: none; border-radius: 50%; }
+.status-color-input::-moz-color-swatch { border: none; border-radius: 50%; }
 .kanban-cards { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
 .kanban-cards .status-add-row { font-size: 12px; padding: 6px 8px; }
 .kanban-card {
@@ -1002,6 +1054,20 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 dialog form { display: flex; flex-direction: column; gap: 12px; padding: 20px; min-width: 280px; }
 .dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 #new-form-status { flex: 1; font-size: 12px; color: var(--danger); }
+.template-picker-row { display: flex; align-items: center; gap: 6px; }
+.template-picker-row select { flex: 1; }
+
+/* --- template editor dialog --- */
+#template-editor-dialog form { min-width: 420px; }
+#template-editor-body {
+  width: 100%;
+  min-height: 260px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+#template-editor-status { flex: 1; font-size: 12px; color: var(--danger); }
 /* pushes whatever comes after it (Cancel/Save) to the right, while a
    leading action like #logout-btn stays pinned left — so a standalone
    action in a dialog's footer doesn't read as part of the Cancel/Save pair */

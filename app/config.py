@@ -16,13 +16,36 @@ APP_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(APP_DIR / ".env")
 
 WORKSPACE_DIR = Path(os.environ.get("PRAXIS_WORKSPACE_DIR", APP_DIR / "workspace")).resolve()
-TEMPLATES_DIR = Path(os.environ.get("PRAXIS_TEMPLATES_DIR", APP_DIR / "templates")).resolve()
+
+# Editable/git-versioned like everything else under WORKSPACE_DIR — not the
+# app's own source tree, so an edit made through the app (see main.py's
+# template routes) survives a redeploy instead of being baked into the
+# image and overwritten by the next build. Seeded once from the app's
+# shipped starter templates by ensure_default_templates().
+TEMPLATES_DIR = WORKSPACE_DIR / "templates"
+_SHIPPED_TEMPLATES_DIR = APP_DIR / "templates"
 
 PROJECTS_DIR = WORKSPACE_DIR / "projects"
 KNOWLEDGE_BASES_DIR = WORKSPACE_DIR / "knowledge-bases"
 USERS_DIR = WORKSPACE_DIR / "users"
 
 DEFAULT_STATUSES = ["proposal", "backlog", "ready", "in_progress", "review", "done"]
+VALID_TEMPLATE_TYPES = ("task", "knowledge")
+
+# Pastel defaults for the Kanban/status-color feature — reuses this app's
+# own container tokens (static/style.css's Material 3 palette) for the
+# three hues that already exist here (primary/secondary/tertiary), filling
+# in the rest with new tones in the same "light tint, dark-enough text"
+# family, so a project that's never touched status_colors still looks
+# intentional rather than arbitrary.
+DEFAULT_STATUS_COLOR_PALETTE = [
+    "#e4e1ff",  # primary container (lavender)
+    "#e0e1f9",  # secondary container (slate-blue)
+    "#cfe8fb",  # sky
+    "#fdedc4",  # amber
+    "#ffd9e8",  # tertiary container (pink)
+    "#d3efdc",  # mint
+]
 
 VALID_ROLES = ["admin", "editor", "guest"]
 DEFAULT_ROLE = "editor"
@@ -48,6 +71,35 @@ def read_project_config(slug: str) -> dict:
 
 def get_statuses(slug: str) -> list[str]:
     return list(read_project_config(slug).get("statuses") or DEFAULT_STATUSES)
+
+
+def get_status_colors(slug: str) -> dict[str, str]:
+    """Explicit per-status overrides only — a status with no entry here
+    falls back to DEFAULT_STATUS_COLOR_PALETTE, cycled by its position in
+    get_statuses (see status_color, which resolves that fallback)."""
+    return dict(read_project_config(slug).get("status_colors") or {})
+
+
+def status_color(slug: str, status: str) -> str:
+    overrides = get_status_colors(slug)
+    if status in overrides:
+        return overrides[status]
+    statuses = get_statuses(slug)
+    index = statuses.index(status) if status in statuses else 0
+    return DEFAULT_STATUS_COLOR_PALETTE[index % len(DEFAULT_STATUS_COLOR_PALETTE)]
+
+
+def set_status_color(slug: str, status: str, color: str) -> dict[str, str]:
+    if status not in get_statuses(slug):
+        raise ValueError(f"Unknown status: {status!r}")
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        raise ValueError(f"Invalid color: {color!r} (expected #rrggbb)")
+    cfg = read_project_config(slug)
+    colors = dict(cfg.get("status_colors") or {})
+    colors[status] = color.lower()
+    cfg["status_colors"] = colors
+    _write_project_config(slug, cfg)
+    return colors
 
 
 def get_member_roles(slug: str) -> dict[str, str]:
@@ -427,6 +479,59 @@ def provision_user_from_email(email: str) -> str:
     username = _unique_slug(base, list_known_users())
     link_user_email(username, email)
     return username
+
+
+def ensure_default_templates() -> None:
+    """Seeds workspace/templates/ from the app's shipped starter templates,
+    once, the first time each one is missing — never overwrites a template
+    someone already edited or added through the app (see main.py's
+    template routes). Same "seed once, then it's just data" pattern as
+    git_store.ensure_baseline_commit; called from main.py's lifespan."""
+    if not _SHIPPED_TEMPLATES_DIR.exists():
+        return
+    for item_type in VALID_TEMPLATE_TYPES:
+        src_dir = _SHIPPED_TEMPLATES_DIR / item_type
+        if not src_dir.exists():
+            continue
+        dest_dir = TEMPLATES_DIR / item_type
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for tpl in src_dir.glob("*.md"):
+            dest = dest_dir / tpl.name
+            if not dest.exists():
+                dest.write_text(tpl.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _sanitize_template_name(raw: str) -> str:
+    """A safe, flat filename for a template — no path separators or
+    traversal, always ending in .md. Same defensive spirit as main.py's
+    _sanitize_relpath for folder paths."""
+    name = re.sub(r"[^\w.-]", "-", raw.strip())
+    name = name.removesuffix(".md") or "untitled"
+    return f"{name}.md"
+
+
+def list_template_names(item_type: str) -> list[str]:
+    d = TEMPLATES_DIR / item_type
+    return sorted(p.name for p in d.glob("*.md")) if d.exists() else []
+
+
+def get_template(item_type: str, name: str) -> str:
+    path = TEMPLATES_DIR / item_type / name
+    if not path.exists():
+        raise FileNotFoundError(name)
+    return path.read_text(encoding="utf-8")
+
+
+def set_template(item_type: str, raw_name: str, body: str) -> str:
+    """Creates or overwrites a template — the same file either way, since
+    there's nothing else identifying "this template" besides its name."""
+    if item_type not in VALID_TEMPLATE_TYPES:
+        raise ValueError(f"Invalid template type: {item_type!r}")
+    name = _sanitize_template_name(raw_name)
+    dest_dir = TEMPLATES_DIR / item_type
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / name).write_text(body, encoding="utf-8")
+    return name
 
 
 def find_username_by_email(email: str) -> str | None:

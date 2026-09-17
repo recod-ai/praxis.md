@@ -281,12 +281,33 @@
   <dialog id="new-dialog">
     <form id="new-form">
       <label>Template (optional)
-        <select id="new-template"><option value="">— none —</option></select>
+        <div class="template-picker-row">
+          <select id="new-template"><option value="">— none —</option></select>
+          <button type="button" id="template-edit-btn" class="btn-icon" title="Edit template" aria-label="Edit template" disabled><span class="material-symbols-outlined" aria-hidden="true">edit</span></button>
+          <button type="button" id="template-new-btn" class="btn-icon" title="New template" aria-label="New template"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
+        </div>
       </label>
       <div class="dialog-actions">
         <span id="new-form-status"></span>
         <button type="button" id="new-cancel">Cancel</button>
         <button type="submit" class="btn-primary">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="template-editor-dialog">
+    <form id="template-editor-form">
+      <h3 id="template-editor-title" style="margin:0 0 4px">New template</h3>
+      <label>Name
+        <input type="text" id="template-editor-name" placeholder="e.g. systematic_review" />
+      </label>
+      <label>Content (Markdown)
+        <textarea id="template-editor-body" rows="14" spellcheck="false"></textarea>
+      </label>
+      <div class="dialog-actions">
+        <span id="template-editor-status"></span>
+        <button type="button" id="template-editor-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
       </div>
     </form>
   </dialog>

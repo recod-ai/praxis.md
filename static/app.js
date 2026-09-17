@@ -2160,9 +2160,33 @@ function peopleRowHTML(item) {
   return html ? `<div class="card-people-row">${html}</div>` : "";
 }
 
+// Per-status color (config.status_color server-side) — null for a kb
+// scope, which has no statuses/status_colors at all, or before scopeConfig
+// has loaded; either way the caller falls back to the plain CSS class.
+function statusColorFor(status) {
+  return (scopeConfig && scopeConfig.status_colors && scopeConfig.status_colors[status]) || null;
+}
+
+// Picks readable text (this app's own on-surface dark, or white) for an
+// arbitrary background hex — covers both the curated pastel defaults and
+// whatever a project admin picks via the color input, without needing a
+// paired "on-color" stored alongside every custom color.
+function readableTextOn(hexColor) {
+  const hex = hexColor.replace("#", "");
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#1c1b1f" : "#ffffff";
+}
+
 function badgesHTML(item) {
   const badges = [];
-  if (item.status) badges.push(`<span class="badge badge-status">${item.status}</span>`);
+  if (item.status) {
+    const bg = statusColorFor(item.status);
+    const style = bg ? ` style="background:${bg};color:${readableTextOn(bg)}"` : "";
+    badges.push(`<span class="badge badge-status"${style}>${item.status}</span>`);
+  }
   for (const tag of item.tags || []) badges.push(`<span class="badge">${tag}</span>`);
   return badges.join("");
 }
@@ -2340,6 +2364,44 @@ async function moveNoteToFolder(noteId, folderPath) {
   }
 }
 
+// Server enforces "owner of every note inside" (see main.py's
+// _delete_folder) — this just surfaces whatever it says rather than
+// re-deriving the same rule client-side, same spirit as item permissions.
+async function deleteFolder(folderPath, e) {
+  e.stopPropagation();
+  const name = folderPath.split("/").pop();
+  if (!confirm(`Delete folder "${name}" and everything inside it? This can't be undone.`)) return;
+  const res = await fetch(`${foldersUrl()}/${folderPath}`, { method: "DELETE" });
+  if (res.ok) {
+    if (currentNoteFolder === folderPath || currentNoteFolder.startsWith(`${folderPath}/`)) {
+      currentNoteFolder = folderPath.split("/").slice(0, -1).join("/");
+    }
+    await loadNoteFolders();
+    await loadItems();
+  } else {
+    showToast((await res.json()).detail || "Could not delete folder.", "error");
+  }
+}
+
+function rowDeleteButtonHTML(label) {
+  return `<button type="button" class="btn-icon row-delete-btn" title="${label}" aria-label="${label}">` +
+    '<span class="material-symbols-outlined" aria-hidden="true">delete</span></button>';
+}
+
+// Mirrors deleteFolder's shape — server enforces "owner only" (see
+// main.py's _delete_item), this just surfaces whatever it says. Same
+// DELETE route the single-item editor's own delete button already uses.
+async function deleteNoteItem(note, e) {
+  e.stopPropagation();
+  if (!confirm(`Delete "${note.title || note.id}"? This can't be undone.`)) return;
+  const res = await fetch(`${itemsBaseUrl()}/${note.id}`, { method: "DELETE" });
+  if (res.ok) {
+    await loadItems();
+  } else {
+    showToast((await res.json()).detail || "Could not delete note.", "error");
+  }
+}
+
 async function renderNotesList() {
   notesListView.innerHTML = "";
   renderNotesBreadcrumb();
@@ -2351,19 +2413,22 @@ async function renderNotesList() {
   for (const folderPath of directSubfolders()) {
     const row = document.createElement("div");
     row.className = "notes-table-row";
-    row.innerHTML = `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">folder</span> ${folderPath.split("/").pop()}</span><span></span><span></span>`;
+    row.innerHTML = `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">folder</span> ${folderPath.split("/").pop()}${rowDeleteButtonHTML("Delete folder")}</span><span></span><span></span>`;
     row.addEventListener("click", folderTileClick(folderPath));
+    row.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folderPath, e));
     makeFolderDropTarget(row, folderPath);
     table.appendChild(row);
   }
   for (const note of notesInCurrentFolder()) {
     const row = document.createElement("div");
     row.className = "notes-table-row";
+    const isOwner = note.owner === currentUser();
     row.innerHTML =
-      `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">description</span> ${note.title || note.id}</span>` +
+      `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">description</span> ${note.title || note.id}${isOwner ? rowDeleteButtonHTML("Delete note") : ""}</span>` +
       `<span>${note.owner ? avatarHTML(note.owner, "avatar-owner") + " " + displayNameFor(note.owner) : ""}</span>` +
       `<span>${note.updated || ""}</span>`;
     row.addEventListener("click", () => openItem(note.id));
+    if (isOwner) row.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteNoteItem(note, e));
     makeNoteDraggable(row, note);
     table.appendChild(row);
   }
@@ -2382,22 +2447,27 @@ async function renderNotesGrid() {
     tile.className = "notes-tile notes-tile-folder";
     tile.innerHTML =
       `<div class="notes-tile-icon"><span class="material-symbols-outlined" aria-hidden="true">folder</span></div>` +
-      `<div class="notes-tile-name">${folderPath.split("/").pop()}</div>`;
+      `<div class="notes-tile-name">${folderPath.split("/").pop()}</div>` +
+      rowDeleteButtonHTML("Delete folder");
     tile.addEventListener("click", folderTileClick(folderPath));
+    tile.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folderPath, e));
     makeFolderDropTarget(tile, folderPath);
     grid.appendChild(tile);
   }
   for (const note of notesInCurrentFolder()) {
     const tile = document.createElement("div");
     tile.className = "notes-tile";
+    const isOwner = note.owner === currentUser();
     tile.innerHTML =
       `<div class="notes-tile-titlebar">` +
       `<span class="notes-tile-icon"><span class="material-symbols-outlined" aria-hidden="true">description</span></span>` +
       `<span class="notes-tile-name">${note.title || note.id}</span>` +
       `</div>` +
       `<div class="notes-tile-preview">${note.excerpt || ""}</div>` +
-      `<div class="notes-tile-footer">${note.owner ? avatarHTML(note.owner, "avatar-owner") + `<span class="notes-tile-owner-name">${displayNameFor(note.owner)}</span>` : ""}</div>`;
+      `<div class="notes-tile-footer">${note.owner ? avatarHTML(note.owner, "avatar-owner") + `<span class="notes-tile-owner-name">${displayNameFor(note.owner)}</span>` : ""}</div>` +
+      (isOwner ? rowDeleteButtonHTML("Delete note") : "");
     tile.addEventListener("click", () => openItem(note.id));
+    if (isOwner) tile.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteNoteItem(note, e));
     makeNoteDraggable(tile, note);
     grid.appendChild(tile);
   }
@@ -2421,9 +2491,27 @@ newFolderBtn.addEventListener("click", async () => {
   }
 });
 
+// Admin-only, matching the server's own require_project_admin gate on
+// PUT .../statuses/{status}/color — not worth letting an editor/guest see
+// a control the API would just 403 anyway.
+async function setStatusColor(status, color) {
+  const res = await fetch(`/api/projects/${scope.slug}/statuses/${encodeURIComponent(status)}/color`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ color }),
+  });
+  if (res.ok) {
+    scopeConfig.status_colors = (await res.json()).status_colors;
+    renderCurrentView();
+  } else {
+    showToast((await res.json()).detail || "Could not save that color.", "error");
+  }
+}
+
 async function renderKanban() {
   kanbanView.innerHTML = "";
   const canEdit = currentRoleForScope() !== "guest";
+  const canManageColors = currentRoleForScope() === "admin";
   const statuses = scope.type === "project" && scopeConfig ? scopeConfig.statuses : [];
   const tasks = itemsCache.filter((i) => i.type === "task");
   for (const status of statuses) {
@@ -2433,7 +2521,25 @@ async function renderKanban() {
     const cardsWrap = document.createElement("div");
     cardsWrap.className = "kanban-cards";
     const inColumn = tasks.filter((t) => t.status === status);
-    column.innerHTML = `<h3>${status} (${inColumn.length})</h3>`;
+
+    const bg = statusColorFor(status) || "transparent";
+    const header = document.createElement("div");
+    header.className = "kanban-column-header";
+    header.style.background = bg;
+    header.style.color = statusColorFor(status) ? readableTextOn(bg) : "var(--on-surface-variant)";
+    header.innerHTML = `<h3>${status} (${inColumn.length})</h3>`;
+    if (canManageColors) {
+      const colorInput = document.createElement("input");
+      colorInput.type = "color";
+      colorInput.className = "status-color-input";
+      colorInput.value = statusColorFor(status) || "#ffffff";
+      colorInput.title = `Color for "${status}"`;
+      colorInput.addEventListener("input", () => { header.style.background = colorInput.value; header.style.color = readableTextOn(colorInput.value); });
+      colorInput.addEventListener("change", () => setStatusColor(status, colorInput.value));
+      header.appendChild(colorInput);
+    }
+    column.appendChild(header);
+
     for (const task of inColumn) {
       const card = document.createElement("div");
       card.className = "kanban-card";
@@ -2540,6 +2646,19 @@ let pendingCreateStatus = null;
 let pendingCreateParent = null;
 let pendingCreateFolder = null;
 
+// --- template picker + its create/edit dialog (a template is global, not
+// scoped to a project/kb — see docs/design/schema.md#templates) ---
+
+async function refreshTemplateOptions(selectName) {
+  const res = await fetch("/api/templates");
+  const data = await res.json();
+  const options = data[pendingCreateType] || [];
+  newTemplate.innerHTML = '<option value="">— none —</option>' +
+    options.map((name) => `<option value="${name}">${name}</option>`).join("");
+  if (selectName) newTemplate.value = selectName;
+  templateEditBtn.disabled = !newTemplate.value;
+}
+
 async function openCreateDialog(opts) {
   if (!scope) return;
   opts = opts || {};
@@ -2549,14 +2668,75 @@ async function openCreateDialog(opts) {
   pendingCreateParent = opts.parent || null;
   pendingCreateFolder = opts.folder !== undefined ? opts.folder : (pendingCreateType === "knowledge" ? currentNoteFolder : null);
 
-  const res = await fetch("/api/templates");
-  const data = await res.json();
-  const options = data[pendingCreateType] || [];
-  newTemplate.innerHTML = '<option value="">— none —</option>' +
-    options.map((name) => `<option value="${name}">${name}</option>`).join("");
+  await refreshTemplateOptions();
 
   dialog.showModal();
 }
+
+const templateEditorDialog = document.getElementById("template-editor-dialog");
+const templateEditorTitle = document.getElementById("template-editor-title");
+const templateEditorName = document.getElementById("template-editor-name");
+const templateEditorBody = document.getElementById("template-editor-body");
+const templateEditorStatus = document.getElementById("template-editor-status");
+const templateEditBtn = document.getElementById("template-edit-btn");
+
+newTemplate.addEventListener("change", () => { templateEditBtn.disabled = !newTemplate.value; });
+
+document.getElementById("template-new-btn").addEventListener("click", () => {
+  templateEditorTitle.textContent = `New ${pendingCreateType} template`;
+  templateEditorName.value = "";
+  templateEditorName.disabled = false;
+  templateEditorBody.value = "";
+  templateEditorStatus.textContent = "";
+  templateEditorDialog.showModal();
+  templateEditorName.focus();
+});
+
+templateEditBtn.addEventListener("click", async () => {
+  if (!newTemplate.value) return;
+  const name = newTemplate.value;
+  templateEditorTitle.textContent = `Edit ${name}`;
+  templateEditorName.value = name;
+  // renaming here would just create a second file under the new name (the
+  // server has no separate rename op — see config.set_template) rather
+  // than rename the existing one, so this stays disabled to avoid that
+  // surprise; delete + re-create under a new name if that's really wanted.
+  templateEditorName.disabled = true;
+  templateEditorBody.value = "";
+  templateEditorStatus.textContent = "Loading…";
+  templateEditorDialog.showModal();
+  const res = await fetch(`/api/templates/${pendingCreateType}/${encodeURIComponent(name)}`);
+  if (res.ok) {
+    templateEditorBody.value = (await res.json()).body;
+    templateEditorStatus.textContent = "";
+  } else {
+    templateEditorStatus.textContent = "Could not load this template.";
+  }
+});
+
+document.getElementById("template-editor-cancel").addEventListener("click", () => templateEditorDialog.close());
+closeOnBackdropClick(templateEditorDialog);
+
+document.getElementById("template-editor-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = templateEditorName.value.trim();
+  if (!name) {
+    templateEditorStatus.textContent = "Name can't be empty.";
+    return;
+  }
+  const res = await fetch(`/api/templates/${pendingCreateType}/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body: templateEditorBody.value }),
+  });
+  if (res.ok) {
+    const saved = await res.json();
+    templateEditorDialog.close();
+    await refreshTemplateOptions(saved.name);
+  } else {
+    templateEditorStatus.textContent = (await res.json()).detail || "Could not save template.";
+  }
+});
 
 newBtn.addEventListener("click", () => openCreateDialog());
 

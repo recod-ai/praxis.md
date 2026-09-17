@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -41,6 +42,7 @@ async def _idle_sweep_loop() -> None:
 async def lifespan(app: FastAPI):
     git_store.repo(config.WORKSPACE_DIR)  # create/open the shared workspace repo (note bases + unencrypted projects)
     git_store.ensure_baseline_commit(config.WORKSPACE_DIR)  # see its docstring — a one-time bootstrap for a pre-existing workspace
+    config.ensure_default_templates()  # seed workspace/templates/ once — see its docstring
     index.rebuild_all()  # the index is a cache — always rebuilt fresh from the files at startup
     sweep_task = asyncio.create_task(_idle_sweep_loop())
     yield
@@ -317,6 +319,42 @@ def _move_item(scope_dir: Path, item_id: str, req: MoveRequest, acting_user: str
         if git_store.commit_all(git_root, f"Move {item_id} to {req.folder or '(root)'}", acting_user):
             _publish_item_changed(scope_dir, item_id, acting_user)
     return {"path": str(new_path.relative_to(content_dir))}
+
+
+def _delete_folder(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
+    """Deleting a folder deletes everything inside it (notes and any
+    nested subfolders) — allowed only when acting_user owns every note in
+    that subtree, checked up front so it's all-or-nothing: no partial
+    delete that leaves someone else's notes orphaned in a folder that no
+    longer shows up in the tree. A note can never be another item's
+    `parent` (only a task can be — see _check_parent_is_task), so unlike
+    _delete_item there's no "still referenced elsewhere" case to guard."""
+    safe_path = _sanitize_relpath(raw_path)
+    if not safe_path:
+        raise HTTPException(400, "Invalid folder path.")
+    content_dir, git_root = config.resolve_scope(scope_dir)
+    with git_store.LOCK:
+        folder_dir = _notes_root(content_dir) / safe_path
+        if not folder_dir.is_dir():
+            raise HTTPException(404, "Folder not found.")
+
+        inside = [
+            item for item in index.list_items(content_dir)
+            if item.get("folder") == safe_path or (item.get("folder") or "").startswith(f"{safe_path}/")
+        ]
+        not_owned = sorted(item["id"] for item in inside if item.get("owner") != acting_user)
+        if not_owned:
+            raise HTTPException(
+                403,
+                "Can only delete a folder if you own every note inside it — "
+                f"not the owner of: {', '.join(not_owned)}.",
+            )
+
+        shutil.rmtree(folder_dir)
+        index.rebuild_scope(content_dir)
+        if git_store.commit_all(git_root, f"Delete folder {safe_path}", acting_user):
+            _publish_item_changed(scope_dir, None, acting_user)
+    return {"path": safe_path}
 
 
 def _list_tags(scope_dir: Path) -> list[str]:
@@ -817,11 +855,37 @@ def sync_profile_from_metroon(req: ProfileSyncRequest, request: Request):
 
 @app.get("/api/templates")
 def list_templates():
-    result: dict[str, list[str]] = {}
-    for item_type in ("task", "knowledge"):
-        d = config.TEMPLATES_DIR / item_type
-        result[item_type] = sorted(p.name for p in d.glob("*.md")) if d.exists() else []
-    return result
+    return {item_type: config.list_template_names(item_type) for item_type in config.VALID_TEMPLATE_TYPES}
+
+
+@app.get("/api/templates/{item_type}/{name}")
+def get_template(item_type: str, name: str, user: str = Depends(get_current_user)):
+    if item_type not in config.VALID_TEMPLATE_TYPES:
+        raise HTTPException(404, f"No such template type: {item_type!r}")
+    try:
+        body = config.get_template(item_type, name)
+    except FileNotFoundError:
+        raise HTTPException(404, "Template not found")
+    return {"type": item_type, "name": name, "body": body}
+
+
+class TemplateRequest(BaseModel):
+    body: str
+
+
+# Global, not scoped to a project/kb — same trust level the rest of this
+# app already gives any logged-in member (e.g. GET /api/directory, the
+# unauthenticated GET /api/templates above): templates are a shared,
+# collaborative resource, not anyone's private content, and there's no
+# site-admin concept anywhere else in this app to gate it behind instead.
+@app.put("/api/templates/{item_type}/{name}")
+def save_template(item_type: str, name: str, req: TemplateRequest, user: str = Depends(get_current_user)):
+    if item_type not in config.VALID_TEMPLATE_TYPES:
+        raise HTTPException(404, f"No such template type: {item_type!r}")
+    with git_store.LOCK:
+        saved_name = config.set_template(item_type, name, req.body)
+        git_store.commit_all(config.WORKSPACE_DIR, f"Save template {item_type}/{saved_name}", user)
+    return {"type": item_type, "name": saved_name}
 
 
 @app.get("/api/me/tasks")
@@ -922,13 +986,33 @@ def list_knowledge_bases(user: str = Depends(get_current_user)):
 
 @app.get("/api/projects/{slug}/config")
 def project_config(slug: str, user: str = Depends(require_project_access)):
+    statuses = config.get_statuses(slug)
     return {
         "name": config.get_project_name(slug),
         "icon": config.get_project_icon(slug),
-        "statuses": config.get_statuses(slug),
+        "statuses": statuses,
+        # fully resolved (explicit override or the default palette's
+        # cycled fallback) so the frontend never has to reimplement that
+        # logic — see config.status_color
+        "status_colors": {s: config.status_color(slug, s) for s in statuses},
         "members": config.get_member_roles(slug),
         "role": config.get_role(slug, user),
     }
+
+
+class StatusColorRequest(BaseModel):
+    color: str  # "#rrggbb"
+
+
+@app.put("/api/projects/{slug}/statuses/{status}/color")
+def project_set_status_color(slug: str, status: str, req: StatusColorRequest, user: str = Depends(require_project_admin)):
+    with git_store.LOCK:
+        try:
+            colors = config.set_status_color(slug, status, req.color)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        git_store.commit_all(config.WORKSPACE_DIR, f"Set {slug}'s {status} color", user)
+    return {"status_colors": {s: config.status_color(slug, s) for s in config.get_statuses(slug)}}
 
 
 @app.put("/api/projects/{slug}/config")
@@ -1037,6 +1121,13 @@ def project_folders(slug: str, user: str = Depends(require_project_access)):
 def project_create_folder(slug: str, req: FolderRequest, user: str = Depends(require_project_editor)):
     result = _create_folder(config.project_dir(slug), req, acting_user=user)
     _mirror_project_to_archeion(slug, user, f"Create folder {req.path}")
+    return result
+
+
+@app.delete("/api/projects/{slug}/folders/{folder_path:path}")
+def project_delete_folder(slug: str, folder_path: str, user: str = Depends(require_project_editor)):
+    result = _delete_folder(config.project_dir(slug), folder_path, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Delete folder {folder_path}")
     return result
 
 
@@ -1190,6 +1281,11 @@ def kb_create_folder(slug: str, req: FolderRequest, user: str = Depends(require_
 @app.put("/api/knowledge-bases/{slug}/items/{item_id}/folder")
 def kb_move_item(slug: str, item_id: str, req: MoveRequest, user: str = Depends(require_kb_editor)):
     return _move_item(config.kb_dir(slug), item_id, req, acting_user=user)
+
+
+@app.delete("/api/knowledge-bases/{slug}/folders/{folder_path:path}")
+def kb_delete_folder(slug: str, folder_path: str, user: str = Depends(require_kb_editor)):
+    return _delete_folder(config.kb_dir(slug), folder_path, acting_user=user)
 
 
 @app.get("/api/knowledge-bases/{slug}/items")
