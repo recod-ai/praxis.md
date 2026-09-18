@@ -17,9 +17,28 @@ import frontmatter
 
 
 def all_files(scope_dir: Path) -> list[Path]:
+    """Every .md file under scope_dir, recursively — except inside a git
+    submodule (docs/design/schema.md, "Pastas submódulo"): a directory with
+    a `.git` entry directly inside it is the root of its own separate
+    repository, so whatever it contains (a student's own README.md,
+    anything) belongs to that repo, never to this scope's index — a plain
+    rglob would otherwise wander into it and try to parse arbitrary
+    markdown as if it were a praxis item."""
     if not scope_dir.exists():
         return []
-    return sorted(scope_dir.rglob("*.md"))
+    found = []
+
+    def walk(d: Path) -> None:
+        for child in sorted(d.iterdir()):
+            if child.is_dir():
+                if (child / ".git").exists():
+                    continue
+                walk(child)
+            elif child.suffix == ".md":
+                found.append(child)
+
+    walk(scope_dir)
+    return sorted(found)
 
 
 def load(path: Path) -> frontmatter.Post:

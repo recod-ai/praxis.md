@@ -24,6 +24,7 @@ duration of its own read-modify-write-commit sequence — otherwise a second
 in-flight write could be swept into the wrong commit.
 """
 
+import shutil
 import threading
 from pathlib import Path
 
@@ -150,6 +151,40 @@ def file_history(root: Path, relpath: str) -> list[dict]:
         sha, author, date, message = line.split("\x1f", 3)
         history.append({"sha": sha, "author": author, "date": date, "message": message})
     return history
+
+
+def add_submodule(root: Path, relpath: str, url: str) -> None:
+    """Registers an existing repo as a real git submodule at relpath, right
+    after the caller has git-rm'd whatever plain files used to live there
+    (see main.py's _convert_folder_to_submodule) — plumbing
+    (`git submodule add`), not GitPython's higher-level Submodule object
+    model, which behaves inconsistently across versions (same preference
+    for plain plumbing as this module's own merge_body). Leaves relpath
+    checked out with the submodule's current content and stages
+    .gitmodules + the new gitlink — caller still has to commit."""
+    repo(root).git.submodule("add", "--force", url, relpath)
+
+
+def remove_submodule(root: Path, relpath: str) -> None:
+    """Un-registers a submodule — deinit, then git-rm the gitlink/.gitmodules
+    entry, then remove whatever's left of its checkout on disk. Never calls
+    anything that could reach the remote repo itself: there is no
+    delete-repo code path here or anywhere else in this codebase, by
+    construction — see docs/design/schema.md, "Pastas submódulo", for why
+    that guarantee matters (praxis.md's own "unlink" action must never be
+    able to destroy the actual git history, only the local reference to
+    it). Caller still has to commit."""
+    r = repo(root)
+    r.git.submodule("deinit", "-f", "--", relpath)
+    r.git.rm("-f", relpath)
+    shutil.rmtree(Path(root) / relpath, ignore_errors=True)
+    # `git rm` already strips this submodule's own section out of
+    # .gitmodules (confirmed live) but leaves the file itself behind even
+    # once empty — tidy that up so unlinking the last submodule in a scope
+    # doesn't leave a stray zero-byte file staged as "modified" forever.
+    gitmodules = Path(root) / ".gitmodules"
+    if gitmodules.exists() and not gitmodules.read_text(encoding="utf-8").strip():
+        r.git.rm("-f", ".gitmodules")
 
 
 def merge_body(base_text: str, ours_text: str, theirs_text: str) -> tuple[str, bool]:

@@ -53,6 +53,26 @@ DEFAULT_ROLE = "editor"
 DEFAULT_PROJECT_ICON = "folder"
 DEFAULT_KB_ICON = "menu_book"
 
+# Folder metadata/ACL (docs/design/schema.md#notes-folders-and-two-views) —
+# `folder.yml` is only written once someone deliberately configures a
+# folder (creation, or the first time its settings panel is used); a
+# folder with none is "normal", unrestricted (see permissions.check_folder_write)
+# — same permissive-when-unset spirit as project members/knowledge
+# assigned_to. `.attachments.yml` is separate and lazier still: it has to
+# be able to exist even in a folder with no folder.yml at all (including
+# the notes root, which is never "created" by anyone) — see main.py's
+# attachment routes.
+FOLDER_CONFIG_FILENAME = "folder.yml"
+ATTACHMENTS_INDEX_FILENAME = ".attachments.yml"
+SUBMODULES_REGISTRY_FILENAME = ".submodules.yml"
+DEFAULT_FOLDER_TYPE = "normal"
+VALID_FOLDER_TYPES = ("normal", "submodule")
+
+MAX_UPLOAD_BYTES = int(os.environ.get("PRAXIS_MAX_UPLOAD_MB", "25")) * 1024 * 1024
+# Read-only attachments only (main.py never parses these) — a deliberately
+# short allowlist, not a general file-upload feature.
+ALLOWED_ATTACHMENT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+
 
 def project_dir(slug: str) -> Path:
     return PROJECTS_DIR / slug
@@ -197,6 +217,80 @@ def set_project_vault_salt(slug: str, salt_hex: str) -> None:
     cfg = read_project_config(slug)
     cfg["vault_salt"] = salt_hex
     _write_project_config(slug, cfg)
+
+
+def read_folder_config(folder_dir: Path) -> dict:
+    """`folder.yml` for one specific folder (a directory under some scope's
+    knowledge/) — never present for a folder nobody has configured yet, see
+    this module's FOLDER_CONFIG_FILENAME docstring."""
+    path = folder_dir / FOLDER_CONFIG_FILENAME
+    if path.exists():
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {}
+
+
+def write_folder_config(folder_dir: Path, cfg: dict) -> None:
+    folder_dir.mkdir(parents=True, exist_ok=True)
+    (folder_dir / FOLDER_CONFIG_FILENAME).write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+
+
+def set_folder_users(folder_dir: Path, acting_user: str, users: list[str]) -> dict:
+    """Write-ACL for a folder (docs/design/schema.md) — `owner` is set once,
+    the first time anyone configures this folder (creation, or the first
+    settings-panel edit of a pre-existing one), and never changes here."""
+    cfg = read_folder_config(folder_dir)
+    cfg.setdefault("owner", acting_user)
+    cfg.setdefault("type", DEFAULT_FOLDER_TYPE)
+    cfg["users"] = list(users)
+    write_folder_config(folder_dir, cfg)
+    return cfg
+
+
+def read_submodules_registry(notes_root: Path) -> dict:
+    """path -> {owner, remote} for every submodule folder in one scope's
+    knowledge/ — kept OUTSIDE the folder itself (unlike a normal folder's
+    folder.yml), because once a path is a real git submodule, everything
+    inside it belongs to that submodule's own repo — the parent repo can no
+    longer track a plain file living alongside it there. One registry file
+    at the notes root instead, `.submodules.yml` (never inside any of the
+    folders it describes)."""
+    path = notes_root / SUBMODULES_REGISTRY_FILENAME
+    if path.exists():
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {}
+
+
+def write_submodules_registry(notes_root: Path, entries: dict) -> None:
+    notes_root.mkdir(parents=True, exist_ok=True)
+    (notes_root / SUBMODULES_REGISTRY_FILENAME).write_text(yaml.safe_dump(entries, sort_keys=False), encoding="utf-8")
+
+
+def register_submodule(notes_root: Path, path: str, owner: str, remote: str) -> None:
+    entries = read_submodules_registry(notes_root)
+    entries[path] = {"owner": owner, "remote": remote}
+    write_submodules_registry(notes_root, entries)
+
+
+def unregister_submodule(notes_root: Path, path: str) -> None:
+    entries = read_submodules_registry(notes_root)
+    entries.pop(path, None)
+    write_submodules_registry(notes_root, entries)
+
+
+def read_attachments_index(folder_dir: Path) -> dict:
+    """filename -> {owner, uploaded} for every attachment uploaded into this
+    exact folder (not recursive) — see main.py's attachment routes. Lazily
+    created on first upload; can exist even where read_folder_config can't
+    (e.g. the notes root, which nobody ever "creates")."""
+    path = folder_dir / ATTACHMENTS_INDEX_FILENAME
+    if path.exists():
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {}
+
+
+def write_attachments_index(folder_dir: Path, entries: dict) -> None:
+    folder_dir.mkdir(parents=True, exist_ok=True)
+    (folder_dir / ATTACHMENTS_INDEX_FILENAME).write_text(yaml.safe_dump(entries, sort_keys=False), encoding="utf-8")
 
 
 def resolve_scope(scope_dir: Path) -> tuple[Path, Path]:

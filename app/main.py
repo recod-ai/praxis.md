@@ -1,24 +1,27 @@
 import asyncio
 import datetime
 import json
+import mimetypes
 import os
 import re
 import shutil
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
 import frontmatter
+import git
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import archeion_mirror, config, events, git_store, index, storage, vault
-from .permissions import check_body_save, check_header_save
+from . import archeion_mirror, config, events, git_store, index, storage, submodules, vault
+from .permissions import check_body_save, check_folder_write, check_header_save
 
 
 def _close_project(slug: str) -> None:
@@ -88,6 +91,14 @@ class RenameRequest(BaseModel):
 
 class FolderRequest(BaseModel):
     path: str  # relative to the notes root, e.g. "meetings" or "meetings/2026"
+
+
+class FolderSettingsRequest(BaseModel):
+    """The gear-icon panel on a folder — a full replace of its write-ACL,
+    same "always submits everything it currently shows" pattern as a
+    project member's role or an item's header (see docs/design/schema.md)."""
+
+    users: list[str] = []
 
 
 class MoveRequest(BaseModel):
@@ -206,12 +217,25 @@ def _notes_root(scope_dir: Path) -> Path:
     return scope_dir / "knowledge"
 
 
+def _is_project_scope(scope_dir: Path) -> bool:
+    return scope_dir.parent == config.PROJECTS_DIR
+
+
 def _scope_channel(scope_dir: Path) -> str:
     """The events.py channel name for a scope directory — "project:<slug>"
     or "kb:<slug>" — so a single publish reaches every client subscribed to
     that project/note base's SSE stream, see events."""
-    kind = "project" if scope_dir.parent == config.PROJECTS_DIR else "kb"
+    kind = "project" if _is_project_scope(scope_dir) else "kb"
     return f"{kind}:{scope_dir.name}"
+
+
+def _role_for_scope(scope_dir: Path, user: str) -> str:
+    """A project's or a note base's role for `user`, whichever this
+    scope_dir is — used by folder-level checks (check_folder_write) that
+    don't otherwise care which kind of scope they're in, same
+    parametrized-by-scope_dir spirit as every other helper in this file."""
+    slug = scope_dir.name
+    return config.get_role(slug, user) if _is_project_scope(scope_dir) else config.get_kb_role(slug, user)
 
 
 async def _sse_stream(request: Request, channel: str):
@@ -271,14 +295,51 @@ def _list_items(scope_dir: Path) -> list[dict]:
     return index.list_items(config.resolve_content_dir(scope_dir))
 
 
-def _list_folders(scope_dir: Path) -> list[str]:
+def _folder_info(root: Path, path: str) -> dict:
+    """One folder's listing entry. A submodule folder's metadata comes from
+    the scope's .submodules.yml registry, never from inside the folder
+    itself (see config.read_submodules_registry for why); anything else
+    reads its own folder.yml (or the all-open defaults if it doesn't have
+    one yet)."""
+    submodule = config.read_submodules_registry(root).get(path)
+    if submodule:
+        return {"path": path, "owner": submodule.get("owner"), "type": "submodule", "users": [], "remote": submodule.get("remote")}
+    cfg = config.read_folder_config(root / path)
+    return {
+        "path": path,
+        "owner": cfg.get("owner"),
+        "type": cfg.get("type") or config.DEFAULT_FOLDER_TYPE,
+        "users": cfg.get("users") or [],
+        "remote": cfg.get("remote"),
+    }
+
+
+def _list_folders(scope_dir: Path) -> list[dict]:
     """Every folder under knowledge/, flat (not just ones with notes
     directly in them — an empty folder someone just created has to be
-    navigable too, and _list_items only sees files)."""
+    navigable too, and _list_items only sees files) — each with its
+    folder.yml metadata (owner/type/remote), see _folder_info.
+
+    Never descends into a submodule folder's own checkout (a directory with
+    a `.git` entry directly inside it — see storage.all_files for the same
+    check) — its subdirectories belong to its own separate repo, not this
+    scope's folder tree."""
     root = _notes_root(config.resolve_content_dir(scope_dir))
     if not root.exists():
         return []
-    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_dir())
+    found: list[str] = []
+
+    def walk(d: Path, rel: str) -> None:
+        for child in sorted(d.iterdir()):
+            if not child.is_dir():
+                continue
+            child_rel = f"{rel}/{child.name}" if rel else child.name
+            found.append(child_rel)
+            if not (child / ".git").exists():
+                walk(child, child_rel)
+
+    walk(root, "")
+    return [_folder_info(root, path) for path in sorted(found)]
 
 
 def _create_folder(scope_dir: Path, req: FolderRequest, acting_user: str) -> dict:
@@ -286,15 +347,23 @@ def _create_folder(scope_dir: Path, req: FolderRequest, acting_user: str) -> dic
     if not safe_path:
         raise HTTPException(400, "Invalid folder path.")
     content_dir, git_root = config.resolve_scope(scope_dir)
+    parent_path = "/".join(safe_path.split("/")[:-1])
     with git_store.LOCK:
-        folder_dir = _notes_root(content_dir) / safe_path
+        root = _notes_root(content_dir)
+        parent_meta = config.read_folder_config(root / parent_path) if parent_path else {}
+        decision = check_folder_write(parent_meta, _role_for_scope(scope_dir, acting_user), acting_user)
+        if not decision.allowed:
+            raise HTTPException(403, decision.reason)
+
+        folder_dir = root / safe_path
         folder_dir.mkdir(parents=True, exist_ok=True)
         # git tracks files, not directories — an empty folder needs a
         # placeholder to survive a fresh clone/checkout of the history
         (folder_dir / ".gitkeep").touch()
+        config.write_folder_config(folder_dir, {"owner": acting_user, "type": config.DEFAULT_FOLDER_TYPE, "users": []})
         if git_store.commit_all(git_root, f"Create folder {safe_path}", acting_user):
             _publish_item_changed(scope_dir, None, acting_user)
-    return {"path": safe_path}
+    return _folder_info(root, safe_path)
 
 
 def _move_item(scope_dir: Path, item_id: str, req: MoveRequest, acting_user: str) -> dict:
@@ -309,7 +378,13 @@ def _move_item(scope_dir: Path, item_id: str, req: MoveRequest, acting_user: str
         if post.metadata.get("type") != "knowledge":
             raise HTTPException(400, "Only notes can be organized into folders.")
 
-        dest_dir = _notes_root(content_dir) / _sanitize_relpath(req.folder)
+        dest_path = _sanitize_relpath(req.folder)
+        dest_meta = config.read_folder_config(_notes_root(content_dir) / dest_path) if dest_path else {}
+        decision = check_folder_write(dest_meta, _role_for_scope(scope_dir, acting_user), acting_user)
+        if not decision.allowed:
+            raise HTTPException(403, decision.reason)
+
+        dest_dir = _notes_root(content_dir) / dest_path
         dest_dir.mkdir(parents=True, exist_ok=True)
         new_path = dest_dir / path.name
         if new_path != path and new_path.exists():
@@ -321,6 +396,21 @@ def _move_item(scope_dir: Path, item_id: str, req: MoveRequest, acting_user: str
     return {"path": str(new_path.relative_to(content_dir))}
 
 
+def _folder_owned_entirely_by(content_dir: Path, safe_path: str, acting_user: str) -> list[str]:
+    """Every note id in this folder's subtree (itself plus nested
+    subfolders) NOT owned by acting_user — empty means "yes, entirely
+    theirs". Shared by _delete_folder (deleting requires this) and the
+    submodule-conversion flow (converting a folder with existing content
+    requires it too, same reasoning: an all-or-nothing action over content
+    that includes someone else's work needs their notes' owner-only
+    protection to still mean something)."""
+    inside = [
+        item for item in index.list_items(content_dir)
+        if item.get("folder") == safe_path or (item.get("folder") or "").startswith(f"{safe_path}/")
+    ]
+    return sorted(item["id"] for item in inside if item.get("owner") != acting_user)
+
+
 def _delete_folder(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
     """Deleting a folder deletes everything inside it (notes and any
     nested subfolders) — allowed only when acting_user owns every note in
@@ -328,7 +418,14 @@ def _delete_folder(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
     delete that leaves someone else's notes orphaned in a folder that no
     longer shows up in the tree. A note can never be another item's
     `parent` (only a task can be — see _check_parent_is_task), so unlike
-    _delete_item there's no "still referenced elsewhere" case to guard."""
+    _delete_item there's no "still referenced elsewhere" case to guard.
+
+    A submodule folder (docs/design/schema.md) is never actually deleted
+    this way — see main.py's unlink_submodule_folder — but removing its
+    local folder.yml/gitlink here would be equally destructive without the
+    same protection, so this function doesn't special-case it: the route
+    layer sends submodule folders to unlink_submodule_folder instead of
+    calling this at all."""
     safe_path = _sanitize_relpath(raw_path)
     if not safe_path:
         raise HTTPException(400, "Invalid folder path.")
@@ -338,11 +435,7 @@ def _delete_folder(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
         if not folder_dir.is_dir():
             raise HTTPException(404, "Folder not found.")
 
-        inside = [
-            item for item in index.list_items(content_dir)
-            if item.get("folder") == safe_path or (item.get("folder") or "").startswith(f"{safe_path}/")
-        ]
-        not_owned = sorted(item["id"] for item in inside if item.get("owner") != acting_user)
+        not_owned = _folder_owned_entirely_by(content_dir, safe_path, acting_user)
         if not_owned:
             raise HTTPException(
                 403,
@@ -355,6 +448,267 @@ def _delete_folder(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
         if git_store.commit_all(git_root, f"Delete folder {safe_path}", acting_user):
             _publish_item_changed(scope_dir, None, acting_user)
     return {"path": safe_path}
+
+
+def _update_folder_settings(scope_dir: Path, raw_path: str, req: FolderSettingsRequest, acting_user: str) -> dict:
+    """The gear-icon panel: only the folder's own owner (or a project/kb
+    admin, same escape hatch admins get everywhere else) can change who
+    else is allowed to write there — see permissions.check_folder_write for
+    how `users` is then used. A folder with no folder.yml yet (created
+    before this feature, or the root) gets one now, owned by whoever's
+    editing it first."""
+    safe_path = _sanitize_relpath(raw_path)
+    content_dir, git_root = config.resolve_scope(scope_dir)
+    with git_store.LOCK:
+        root = _notes_root(content_dir)
+        folder_dir = root / safe_path
+        if not folder_dir.is_dir():
+            raise HTTPException(404, "Folder not found.")
+        if safe_path in config.read_submodules_registry(root):
+            raise HTTPException(400, "A submodule folder has no write-user list — anyone with editor access can push.")
+        cfg = config.read_folder_config(folder_dir)
+        owner = cfg.get("owner")
+        role = _role_for_scope(scope_dir, acting_user)
+        if owner is not None and acting_user != owner and role != "admin":
+            raise HTTPException(403, f"Only {owner} (or an admin) can change this folder's settings.")
+        cfg = config.set_folder_users(folder_dir, acting_user, req.users)
+        git_store.commit_all(git_root, f"Update settings for folder {safe_path}", acting_user)
+    return _folder_info(root, safe_path)
+
+
+def _submodule_repo_name(scope_dir: Path, safe_path: str) -> str:
+    kind = "project" if _is_project_scope(scope_dir) else "kb"
+    return f"{kind}-{scope_dir.name}-{safe_path.replace('/', '-')}"
+
+
+def _member_roles_for_scope(scope_dir: Path) -> dict[str, str]:
+    slug = scope_dir.name
+    return config.get_member_roles(slug) if _is_project_scope(scope_dir) else config.get_kb_member_roles(slug)
+
+
+def _sync_submodule_collaborators(scope_dir: Path) -> None:
+    """Resync every submodule folder's Forgejo collaborators to this
+    scope's current member list — called wherever project/kb membership
+    changes, same trigger points as _sync_project_collaborators_to_archeion.
+    Best-effort (submodules.sync_collaborators already never raises) and
+    skips entirely for an encrypted-and-currently-locked project — there's
+    nothing to resync since submodules aren't supported there in the first
+    place (see _convert_folder_to_submodule)."""
+    try:
+        content_dir = config.resolve_content_dir(scope_dir)
+    except vault.ProjectLocked:
+        return
+    root = _notes_root(content_dir)
+    registry = config.read_submodules_registry(root)
+    if not registry:
+        return
+    member_roles = _member_roles_for_scope(scope_dir)
+    for path in registry:
+        submodules.sync_collaborators(
+            _submodule_repo_name(scope_dir, path), member_roles, lambda u: config.get_user_profile(u).get("email")
+        )
+
+
+def _convert_folder_to_submodule(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
+    """Turns an existing (possibly non-empty) folder into a real git
+    submodule — see docs/design/schema.md, "Pastas submódulo". Requires
+    owning every note already in that folder's subtree, same rule and same
+    reasoning as _delete_folder (this is just as all-or-nothing an action
+    over content that might include someone else's work)."""
+    safe_path = _sanitize_relpath(raw_path)
+    if not safe_path:
+        raise HTTPException(400, "The notes root itself can't become a submodule.")
+    if _is_project_scope(scope_dir) and vault.has_vault(scope_dir.name):
+        # reaching Forgejo on every unlock, and keeping a live external git
+        # remote for content whose whole point is staying off any second
+        # copy, both argue against supporting this here (see
+        # docs/design/schema.md for the fuller reasoning)
+        raise HTTPException(400, "Submodule folders aren't supported in an encrypted project.")
+    content_dir, git_root = config.resolve_scope(scope_dir)
+
+    with git_store.LOCK:
+        root = _notes_root(content_dir)
+        folder_dir = root / safe_path
+        if not folder_dir.is_dir():
+            raise HTTPException(404, "Folder not found.")
+        if safe_path in config.read_submodules_registry(root):
+            raise HTTPException(400, "This folder is already a submodule.")
+
+        not_owned = _folder_owned_entirely_by(content_dir, safe_path, acting_user)
+        if not_owned:
+            raise HTTPException(
+                403,
+                "Can only convert a folder to a submodule if you own every note inside it — "
+                f"not the owner of: {', '.join(not_owned)}.",
+            )
+
+        repo_name = _submodule_repo_name(scope_dir, safe_path)
+        try:
+            admin_url = submodules.create_submodule_repo(repo_name)
+        except submodules.SubmoduleError as err:
+            raise HTTPException(400, str(err))
+
+        existing_files = [p for p in folder_dir.iterdir() if p.name not in (".gitkeep", "folder.yml", config.ATTACHMENTS_INDEX_FILENAME)]
+        if existing_files:
+            tmp_dir = Path(tempfile.mkdtemp(prefix="praxis-submodule-"))
+            try:
+                clone = git.Repo.clone_from(admin_url, tmp_dir)
+                for item in existing_files:
+                    dest = tmp_dir / item.name
+                    if item.is_dir():
+                        shutil.copytree(item, dest)
+                    else:
+                        shutil.copy2(item, dest)
+                actor = git.Actor(acting_user, f"{acting_user}@praxis.local")
+                clone.git.add(A=True)
+                if clone.is_dirty(index=True, working_tree=False, untracked_files=True):
+                    clone.index.commit(f"Initial content from {safe_path}", author=actor, committer=actor)
+                    clone.git.push("origin", "HEAD")
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        relpath = str(folder_dir.relative_to(git_root))
+        git_root_repo = git_store.repo(git_root)
+        git_root_repo.git.rm("-r", relpath)
+        git_store.add_submodule(git_root, relpath, admin_url)
+
+        config.register_submodule(root, safe_path, acting_user, submodules.public_clone_url(repo_name))
+        submodules.sync_collaborators(repo_name, _member_roles_for_scope(scope_dir), lambda u: config.get_user_profile(u).get("email"))
+
+        index.rebuild_scope(content_dir)  # any notes that used to be in this folder are gone from here now
+        git_store.commit_all(git_root, f"Convert folder {safe_path} to a submodule", acting_user)
+        _publish_item_changed(scope_dir, None, acting_user)
+    return _folder_info(root, safe_path)
+
+
+def _delete_folder_or_unlink(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
+    """Route-layer dispatch for the one DELETE endpoint a folder tile's
+    delete button always calls: a submodule folder unlinks (see
+    _unlink_submodule_folder), a normal one really deletes (_delete_folder)
+    — _delete_folder itself doesn't know about submodules at all, by
+    design (see its own docstring)."""
+    safe_path = _sanitize_relpath(raw_path)
+    content_dir = config.resolve_content_dir(scope_dir)
+    if safe_path in config.read_submodules_registry(_notes_root(content_dir)):
+        return _unlink_submodule_folder(scope_dir, raw_path, acting_user)
+    return _delete_folder(scope_dir, raw_path, acting_user)
+
+
+def _unlink_submodule_folder(scope_dir: Path, raw_path: str, acting_user: str) -> dict:
+    """Removes the submodule reference from this scope's tree — never the
+    underlying Forgejo repo itself (see git_store.remove_submodule's
+    docstring). Anyone who can edit this scope can unlink one — matching
+    the "no per-person granularity" design of a submodule folder, unlike
+    _delete_folder's owner-of-everything-inside rule for a normal one."""
+    safe_path = _sanitize_relpath(raw_path)
+    content_dir, git_root = config.resolve_scope(scope_dir)
+    with git_store.LOCK:
+        root = _notes_root(content_dir)
+        if safe_path not in config.read_submodules_registry(root):
+            raise HTTPException(404, "This isn't a submodule folder.")
+        relpath = str((root / safe_path).relative_to(git_root))
+        git_store.remove_submodule(git_root, relpath)
+        config.unregister_submodule(root, safe_path)
+        git_store.commit_all(git_root, f"Unlink submodule folder {safe_path} (repo kept on Forgejo)", acting_user)
+        _publish_item_changed(scope_dir, None, acting_user)
+    return {"path": safe_path}
+
+
+def _sanitize_filename(raw: str) -> str:
+    """Basename-only sanitizing for an uploaded file — keeps the extension
+    (needed for content-type/allowlist checks and for the browser to know
+    how to render it), sanitizes everything before it the same way
+    _sanitize_relpath sanitizes a folder segment."""
+    stem, _, ext = raw.rpartition(".")
+    stem = re.sub(r"[^\w-]", "-", (stem or raw).strip()) or "file"
+    return f"{stem}.{ext.lower()}" if ext else stem
+
+
+def _unique_attachment_name(folder_dir: Path, name: str) -> str:
+    if not (folder_dir / name).exists():
+        return name
+    stem, _, ext = name.rpartition(".")
+    n = 2
+    while (folder_dir / f"{stem}-{n}.{ext}").exists():
+        n += 1
+    return f"{stem}-{n}.{ext}"
+
+
+def _list_attachments(scope_dir: Path, raw_path: str) -> list[dict]:
+    """Every attachment directly in this folder (not recursive, same as
+    notesInCurrentFolder client-side) — cross-referenced against what's
+    actually still on disk, in case one was removed outside the app (same
+    ground-truth-is-the-filesystem spirit as storage.py)."""
+    safe_path = _sanitize_relpath(raw_path)
+    content_dir = config.resolve_content_dir(scope_dir)
+    folder_dir = _notes_root(content_dir) / safe_path
+    entries = config.read_attachments_index(folder_dir)
+    return [
+        {"folder": safe_path, "filename": name, "owner": meta.get("owner"), "uploaded": meta.get("uploaded")}
+        for name, meta in entries.items()
+        if (folder_dir / name).is_file()
+    ]
+
+
+async def _save_attachment(scope_dir: Path, raw_path: str, file: UploadFile, acting_user: str) -> dict:
+    safe_path = _sanitize_relpath(raw_path)
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in config.ALLOWED_ATTACHMENT_EXTENSIONS:
+        raise HTTPException(400, f"Unsupported file type: {ext or '(none)'}. Allowed: PDF and images only.")
+
+    content_dir, git_root = config.resolve_scope(scope_dir)
+    with git_store.LOCK:
+        folder_dir = _notes_root(content_dir) / safe_path
+        folder_meta = config.read_folder_config(folder_dir)
+        decision = check_folder_write(folder_meta, _role_for_scope(scope_dir, acting_user), acting_user)
+        if not decision.allowed:
+            raise HTTPException(403, decision.reason)
+
+        folder_dir.mkdir(parents=True, exist_ok=True)
+        data = await file.read()
+        if len(data) > config.MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"File too large (max {config.MAX_UPLOAD_BYTES // (1024 * 1024)} MB).")
+
+        filename = _unique_attachment_name(folder_dir, _sanitize_filename(file.filename or "upload"))
+        (folder_dir / filename).write_bytes(data)
+
+        index_entries = config.read_attachments_index(folder_dir)
+        index_entries[filename] = {"owner": acting_user, "uploaded": datetime.date.today().isoformat()}
+        config.write_attachments_index(folder_dir, index_entries)
+
+        if git_store.commit_all(git_root, f"Upload {filename} to {safe_path or '(root)'}", acting_user):
+            _publish_item_changed(scope_dir, None, acting_user)
+    return {"folder": safe_path, "filename": filename}
+
+
+def _attachment_disk_path(scope_dir: Path, raw_path: str, filename: str) -> Path:
+    safe_path = _sanitize_relpath(raw_path)
+    content_dir = config.resolve_content_dir(scope_dir)
+    path = _notes_root(content_dir) / safe_path / filename
+    entries = config.read_attachments_index(_notes_root(content_dir) / safe_path)
+    if filename not in entries or not path.is_file():
+        raise HTTPException(404, "Attachment not found.")
+    return path
+
+
+def _delete_attachment(scope_dir: Path, raw_path: str, filename: str, acting_user: str) -> dict:
+    safe_path = _sanitize_relpath(raw_path)
+    content_dir, git_root = config.resolve_scope(scope_dir)
+    with git_store.LOCK:
+        folder_dir = _notes_root(content_dir) / safe_path
+        entries = config.read_attachments_index(folder_dir)
+        meta = entries.get(filename)
+        if meta is None or not (folder_dir / filename).is_file():
+            raise HTTPException(404, "Attachment not found.")
+        if meta.get("owner") != acting_user:
+            raise HTTPException(403, "Only whoever uploaded this file can delete it.")
+
+        (folder_dir / filename).unlink()
+        del entries[filename]
+        config.write_attachments_index(folder_dir, entries)
+        if git_store.commit_all(git_root, f"Delete {filename} from {safe_path or '(root)'}", acting_user):
+            _publish_item_changed(scope_dir, None, acting_user)
+    return {"folder": safe_path, "filename": filename}
 
 
 def _list_tags(scope_dir: Path) -> list[str]:
@@ -458,7 +812,12 @@ def _create_item(scope_dir: Path, req: CreateRequest, project_slug: str | None, 
         else:
             dest_dir = _notes_root(content_dir)
             if req.folder:
-                dest_dir = dest_dir / _sanitize_relpath(req.folder)
+                safe_folder = _sanitize_relpath(req.folder)
+                folder_meta = config.read_folder_config(dest_dir / safe_folder)
+                decision = check_folder_write(folder_meta, _role_for_scope(scope_dir, owner), owner)
+                if not decision.allowed:
+                    raise HTTPException(403, decision.reason)
+                dest_dir = dest_dir / safe_folder
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / f"{item_id}.md"
         dest_path.write_bytes(frontmatter.dumps(post).encode("utf-8"))
@@ -1044,6 +1403,7 @@ def add_project_member(slug: str, req: MemberRequest, user: str = Depends(requir
             config.link_user_email(req.username, req.email)
         git_store.commit_all(config.WORKSPACE_DIR, f"Add {req.username} to {slug}", user)
     _sync_project_collaborators_to_archeion(slug)
+    _sync_submodule_collaborators(config.project_dir(slug))
     return {"members": roles}
 
 
@@ -1055,6 +1415,7 @@ def remove_project_member(slug: str, username: str, user: str = Depends(require_
         roles = config.remove_member(slug, username)
         git_store.commit_all(config.WORKSPACE_DIR, f"Remove {username} from {slug}", user)
     _sync_project_collaborators_to_archeion(slug)
+    _sync_submodule_collaborators(config.project_dir(slug))
     return {"members": roles}
 
 
@@ -1126,8 +1487,54 @@ def project_create_folder(slug: str, req: FolderRequest, user: str = Depends(req
 
 @app.delete("/api/projects/{slug}/folders/{folder_path:path}")
 def project_delete_folder(slug: str, folder_path: str, user: str = Depends(require_project_editor)):
-    result = _delete_folder(config.project_dir(slug), folder_path, acting_user=user)
+    result = _delete_folder_or_unlink(config.project_dir(slug), folder_path, acting_user=user)
     _mirror_project_to_archeion(slug, user, f"Delete folder {folder_path}")
+    return result
+
+
+@app.put("/api/projects/{slug}/folders/{folder_path:path}/settings")
+def project_folder_settings(
+    slug: str, folder_path: str, req: FolderSettingsRequest, user: str = Depends(require_project_editor)
+):
+    result = _update_folder_settings(config.project_dir(slug), folder_path, req, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Update settings for folder {folder_path}")
+    return result
+
+
+@app.post("/api/projects/{slug}/folders/{folder_path:path}/submodule")
+def project_convert_folder_submodule(slug: str, folder_path: str, user: str = Depends(require_project_editor)):
+    return _convert_folder_to_submodule(config.project_dir(slug), folder_path, acting_user=user)
+
+
+@app.get("/api/projects/{slug}/attachments")
+def project_list_attachments(slug: str, folder: str = "", user: str = Depends(require_project_access)):
+    # folder is a query param, not a path segment — a {folder_path:path}
+    # segment can't unambiguously address the notes root (empty path), which
+    # attachments (unlike folders themselves) need to: an upload with no
+    # folder selected lands directly in knowledge/, see _save_attachment.
+    return _list_attachments(config.project_dir(slug), folder)
+
+
+@app.post("/api/projects/{slug}/attachments")
+async def project_upload_attachment(
+    slug: str, folder: str = Form(""), file: UploadFile = File(...), user: str = Depends(require_project_editor)
+):
+    result = await _save_attachment(config.project_dir(slug), folder, file, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Upload {result['filename']}")
+    return result
+
+
+@app.get("/api/projects/{slug}/attachments/{filename}")
+def project_get_attachment(slug: str, filename: str, folder: str = "", user: str = Depends(require_project_access)):
+    path = _attachment_disk_path(config.project_dir(slug), folder, filename)
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, content_disposition_type="inline")
+
+
+@app.delete("/api/projects/{slug}/attachments/{filename}")
+def project_delete_attachment(slug: str, filename: str, folder: str = "", user: str = Depends(require_project_editor)):
+    result = _delete_attachment(config.project_dir(slug), folder, filename, acting_user=user)
+    _mirror_project_to_archeion(slug, user, f"Delete {filename}")
     return result
 
 
@@ -1252,6 +1659,7 @@ def add_kb_member(slug: str, req: MemberRequest, user: str = Depends(require_kb_
         if req.email:
             config.link_user_email(req.username, req.email)
         git_store.commit_all(config.WORKSPACE_DIR, f"Add {req.username} to {slug}", user)
+    _sync_submodule_collaborators(config.kb_dir(slug))
     return {"members": roles}
 
 
@@ -1260,6 +1668,7 @@ def remove_kb_member(slug: str, username: str, user: str = Depends(require_kb_ad
     with git_store.LOCK:
         roles = config.remove_kb_member(slug, username)
         git_store.commit_all(config.WORKSPACE_DIR, f"Remove {username} from {slug}", user)
+    _sync_submodule_collaborators(config.kb_dir(slug))
     return {"members": roles}
 
 
@@ -1285,7 +1694,41 @@ def kb_move_item(slug: str, item_id: str, req: MoveRequest, user: str = Depends(
 
 @app.delete("/api/knowledge-bases/{slug}/folders/{folder_path:path}")
 def kb_delete_folder(slug: str, folder_path: str, user: str = Depends(require_kb_editor)):
-    return _delete_folder(config.kb_dir(slug), folder_path, acting_user=user)
+    return _delete_folder_or_unlink(config.kb_dir(slug), folder_path, acting_user=user)
+
+
+@app.put("/api/knowledge-bases/{slug}/folders/{folder_path:path}/settings")
+def kb_folder_settings(slug: str, folder_path: str, req: FolderSettingsRequest, user: str = Depends(require_kb_editor)):
+    return _update_folder_settings(config.kb_dir(slug), folder_path, req, acting_user=user)
+
+
+@app.post("/api/knowledge-bases/{slug}/folders/{folder_path:path}/submodule")
+def kb_convert_folder_submodule(slug: str, folder_path: str, user: str = Depends(require_kb_editor)):
+    return _convert_folder_to_submodule(config.kb_dir(slug), folder_path, acting_user=user)
+
+
+@app.get("/api/knowledge-bases/{slug}/attachments")
+def kb_list_attachments(slug: str, folder: str = "", user: str = Depends(require_kb_access)):
+    return _list_attachments(config.kb_dir(slug), folder)
+
+
+@app.post("/api/knowledge-bases/{slug}/attachments")
+async def kb_upload_attachment(
+    slug: str, folder: str = Form(""), file: UploadFile = File(...), user: str = Depends(require_kb_editor)
+):
+    return await _save_attachment(config.kb_dir(slug), folder, file, acting_user=user)
+
+
+@app.get("/api/knowledge-bases/{slug}/attachments/{filename}")
+def kb_get_attachment(slug: str, filename: str, folder: str = "", user: str = Depends(require_kb_access)):
+    path = _attachment_disk_path(config.kb_dir(slug), folder, filename)
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, content_disposition_type="inline")
+
+
+@app.delete("/api/knowledge-bases/{slug}/attachments/{filename}")
+def kb_delete_attachment(slug: str, filename: str, folder: str = "", user: str = Depends(require_kb_editor)):
+    return _delete_attachment(config.kb_dir(slug), folder, filename, acting_user=user)
 
 
 @app.get("/api/knowledge-bases/{slug}/items")

@@ -51,3 +51,32 @@ def check_header_save(existing_meta: dict, acting_user: str) -> SaveDecision:
     if acting_user != owner:
         return SaveDecision(False, f"Only the owner ({owner}) can edit the header.")
     return SaveDecision(True)
+
+
+def check_folder_write(folder_meta: dict, project_role: str, acting_user: str) -> SaveDecision:
+    """Gate for writing *into* a specific folder — creating a note there,
+    uploading an attachment, creating a subfolder, moving a note in (see
+    config.read_folder_config for where folder_meta comes from). This is on
+    top of, not instead of, the ordinary scope-wide editor check every
+    mutating route already enforces — a guest never reaches this at all.
+
+    Same permissive-when-unset pattern as everything else in this app: a
+    folder nobody has ever configured (folder_meta == {}) or an explicitly
+    empty `users:` list both mean "any editor" — narrowing only once the
+    folder's owner opts in by naming specific users. A submodule folder
+    (see docs/design/schema.md) never has a `users:` list at all (write
+    access there is everyone-with-editor-access, by design, enforced on the
+    Forgejo side instead — see app/submodules.py), so it always falls into
+    the same "any editor" branch as an unconfigured one.
+
+    An admin can always write here — same "admin implies everything editor
+    can do, and more" rule used everywhere else roles are checked."""
+    if project_role == "admin":
+        return SaveDecision(True)
+    users = folder_meta.get("users") or []
+    if not users:
+        return SaveDecision(True)
+    owner = folder_meta.get("owner")
+    if acting_user == owner or acting_user in users:
+        return SaveDecision(True)
+    return SaveDecision(False, f"Only {owner} and {users} can write in this folder.")

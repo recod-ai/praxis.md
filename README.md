@@ -149,6 +149,19 @@ is keeping it off any second copy. See
 for how the org/bot account itself gets set up (a one-time manual step,
 not something this app provisions on its own).
 
+### Submodule folders
+
+Reuses the same Forgejo instance as Archeion mirroring above, but a
+**separate org** — set `PRAXIS_SUBMODULES_ORG` (the admin credentials are
+the same `PRAXIS_ARCHEION_ADMIN_USERNAME`/`PASSWORD` archeion's own
+collaborator sync already needs). Without it, turning a folder into a
+submodule fails with a clear error instead of silently no-oping — see
+`docs/design/schema.md`, "Submodule folders", for what this actually does
+and why it needs its own org rather than sharing the mirror's.
+
+Uploads (PDF/image attachments, any folder) are capped by
+`PRAXIS_MAX_UPLOAD_MB` (default 25).
+
 ## Workspace layout
 
 ```
@@ -158,6 +171,10 @@ workspace/
       project.yml        # members + statuses
       tasks/
       knowledge/
+        <folder>/
+          folder.yml          # owner + write-access list — see docs/design/schema.md
+          .attachments.yml    # uploaded PDFs/images in this folder
+        .submodules.yml       # submodule folders in this scope: path -> {owner, remote}
   knowledge-bases/
     <kb-slug>/             # standalone, not tied to any project
 ```

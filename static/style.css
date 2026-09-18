@@ -549,6 +549,12 @@ select {
   right: 6px;
   background: var(--surface-1);
 }
+.notes-tile .row-settings-btn {
+  position: absolute;
+  top: 6px;
+  right: 32px;
+  background: var(--surface-1);
+}
 
 /* Same dense-inline-control exemption as .nav-section-title's gear/+
    buttons (see .btn-icon's own comment) — a folder/note row/tile is too
@@ -558,9 +564,10 @@ select {
    there permanently would compete with the item's own name for attention.
    Shared by folders and notes alike — owner-only deletion either way, see
    main.py's _delete_folder / _delete_item. */
-.row-delete-btn { width: 22px; height: 22px; margin-left: auto; flex-shrink: 0; opacity: 0; }
-.row-delete-btn .material-symbols-outlined { font-size: 16px; }
-.notes-table-row:hover .row-delete-btn, .notes-tile:hover .row-delete-btn { opacity: 1; }
+.row-delete-btn, .row-settings-btn { width: 22px; height: 22px; margin-left: auto; flex-shrink: 0; opacity: 0; }
+.row-delete-btn .material-symbols-outlined, .row-settings-btn .material-symbols-outlined { font-size: 16px; }
+.notes-table-row:hover .row-delete-btn, .notes-tile:hover .row-delete-btn,
+.notes-table-row:hover .row-settings-btn, .notes-tile:hover .row-settings-btn { opacity: 1; }
 
 /* --- main / board views --- */
 
@@ -786,6 +793,19 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 
 #history-dialog { padding: 20px; min-width: 420px; max-width: 520px; }
 #history-dialog[open] { display: flex; flex-direction: column; gap: 12px; max-height: 80vh; }
+
+#folder-settings-dialog { padding: 20px; min-width: 380px; max-width: 480px; }
+#folder-settings-dialog[open] { display: flex; flex-direction: column; gap: 10px; }
+#folder-settings-dialog input[type="text"] { width: 100%; box-sizing: border-box; }
+.folder-settings-toggle { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 13px; color: var(--on-surface-variant); }
+
+/* Native browser viewer (img / iframe for PDF), just embedded in a bigger-
+   than-usual dialog instead of a page of its own — see openAttachmentViewer. */
+#attachment-viewer-dialog { padding: 16px; width: 80vw; max-width: 900px; }
+#attachment-viewer-dialog[open] { display: flex; flex-direction: column; gap: 10px; max-height: 88vh; }
+#attachment-viewer-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; }
+#attachment-viewer-body img { max-width: 100%; max-height: 78vh; object-fit: contain; }
+#attachment-viewer-body iframe { width: 100%; height: 78vh; border: none; }
 #history-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .history-entry { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: var(--shape-sm); }
 .history-entry:hover { background: var(--surface-alt); }
