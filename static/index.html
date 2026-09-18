@@ -135,6 +135,8 @@
           <button data-view="notes-grid">Grid</button>
         </div>
         <button id="new-folder-btn" class="btn-tonal" hidden>+ New folder</button>
+        <button id="upload-attachment-btn" class="btn-tonal" hidden>+ Upload</button>
+        <input type="file" id="attachment-file-input" hidden accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.svg" />
         <button id="new-btn" class="btn-primary" hidden>+ New</button>
       </div>
       <div id="notes-breadcrumb" hidden></div>
@@ -186,6 +188,7 @@
       <span id="meta-summary">Select an item</span>
       <span id="presence-indicator" hidden></span>
       <button id="attach-note-btn" class="btn-icon" hidden title="Attach note" aria-label="Attach note"><span class="material-symbols-outlined" aria-hidden="true">attach_file</span></button>
+      <button id="attach-file-btn" class="btn-icon" hidden title="Insert attachment" aria-label="Insert attachment"><span class="material-symbols-outlined" aria-hidden="true">image</span></button>
       <button id="history-btn" class="btn-icon" title="Version history" aria-label="View version history"><span class="material-symbols-outlined" aria-hidden="true">history</span></button>
       <button type="button" id="delete-item-btn" class="btn-icon" hidden title="Delete" aria-label="Delete"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button>
       <button id="toggle-read" class="btn-icon" title="Read mode" aria-label="Switch to read mode"><span class="material-symbols-outlined" aria-hidden="true">visibility</span></button>
@@ -310,6 +313,39 @@
         <button type="submit" class="btn-primary">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="folder-settings-dialog">
+    <h3 style="margin:0 0 4px">Folder settings</h3>
+    <div id="folder-settings-normal">
+      <p class="muted">Anyone with access can see what's inside. Writing here (new notes, uploads, subfolders) is open to any editor, unless you name specific people below.</p>
+      <div id="folder-users-chips" class="chip-list"></div>
+      <input type="text" id="folder-users-add" autocomplete="off" placeholder="Add a person who can write here…" />
+    </div>
+    <div id="folder-settings-submodule" hidden>
+      <p class="muted">This is a git submodule — anyone with editor access can clone/push, no per-person list. History can't be force-pushed or deleted from here.</p>
+      <label>Clone URL
+        <input type="text" id="folder-submodule-remote" readonly />
+      </label>
+      <button type="button" id="folder-unlink-btn" class="btn-tonal">Unlink (keeps the repo on Forgejo)</button>
+    </div>
+    <label class="folder-settings-toggle">
+      <input type="checkbox" id="folder-submodule-toggle" /> Special folder (git submodule)
+    </label>
+    <div class="dialog-actions">
+      <span id="folder-settings-status"></span>
+      <span class="dialog-actions-spacer"></span>
+      <button type="button" id="folder-settings-close">Close</button>
+      <button type="button" id="folder-settings-save" class="btn-primary">Save</button>
+    </div>
+  </dialog>
+
+  <dialog id="attachment-viewer-dialog">
+    <div id="attachment-viewer-body"></div>
+    <div class="dialog-actions">
+      <span class="dialog-actions-spacer"></span>
+      <button type="button" id="attachment-viewer-close">Close</button>
+    </div>
   </dialog>
 
   <dialog id="history-dialog">

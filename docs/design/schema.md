@@ -477,6 +477,130 @@ Two ways to browse them, Drive-style:
 A breadcrumb (**All notes / folder / subfolder…**) tracks the current
 folder and navigates back up; both views share the same folder state.
 
+### Folder settings: owner and write access
+
+A folder can carry its own metadata, `folder.yml` next to its `.gitkeep`
+(`config.read_folder_config`/`write_folder_config`) — written the moment
+it's created (`owner:` = creator) and editable afterward from the gear icon
+next to a folder's delete button:
+
+```yaml
+owner: mrai
+type: normal          # normal | submodule — see Submodule folders, below
+users: []              # who besides owner can write here; [] = any editor
+```
+
+**Reading stays exactly as open as before** — anyone with project/KB
+access sees everything in every folder, restricted or not; `users:` only
+gates *writing into* that specific folder (creating a note there,
+uploading an attachment, creating a subfolder, moving a note in —
+`permissions.check_folder_write`, checked in addition to, not instead of,
+the ordinary editor-or-above gate every mutating route already has). Same
+permissive-when-unset pattern as `assigned_to` on a knowledge item: an
+empty `users:` (or no `folder.yml` at all — every folder that predates
+this feature) means "any editor," narrowing only once the owner names
+specific people. A project/KB `admin` always passes this check regardless
+of `users:`, same "admin implies everything editor can, and more" rule
+used everywhere else. Only the folder's own `owner` (or an admin) can
+change `users:` (`PUT .../folders/{path}/settings`) — this doesn't change
+`_delete_folder`'s existing rule (still "owns every note inside," see
+above), which is orthogonal to write-access-going-forward.
+
+### Attachments: PDF and images
+
+A folder can also hold plain uploaded files — PDF and common image types
+(`.pdf .png .jpg .jpeg .gif .webp .svg`, `config.ALLOWED_ATTACHMENT_EXTENSIONS`,
+capped at `PRAXIS_MAX_UPLOAD_MB`, default 25) — read-only from this app's
+point of view: nothing here ever parses or edits one, only stores and
+serves it (`GET .../attachments/{filename}?folder=...`, inline
+`Content-Disposition` so the browser's own PDF/image viewer renders it).
+They sit directly inside the folder they were uploaded to, alongside its
+notes and subfolders — not a separate area. Since a plain file has nowhere
+to keep an `owner` of its own, each folder gets a small lazily-created
+sidecar, `.attachments.yml` (filename → `{owner, uploaded}`,
+`config.read_attachments_index`) — kept separate from `folder.yml` because
+it has to exist even where a folder has no `folder.yml` yet (including the
+notes root, which nobody ever explicitly "creates"). Uploading is gated by
+the same `check_folder_write` as creating a note there; deleting is
+owner-only, mirroring a note's own delete rule.
+
+**Referencing/embedding is just markdown** — no new syntax: an
+attachment's URL is a normal URL, so `![caption](url)` already renders a
+real `<img>` via `marked.parse` (see Editor, above), and `[name](url)`
+works the same way for a PDF. The editor's **Insert attachment** button
+(next to **Attach note**) lists the open item's own folder's attachments
+and inserts the right one at the cursor, so nobody has to type a URL by
+hand. Clicking either — the embedded image, the PDF link, or the row in
+the folder browser itself — opens the same in-app viewer (a `<dialog>`
+holding an `<img>` or an `<iframe>`) instead of navigating away or
+downloading; this is the browser's own built-in image/PDF renderer, just
+inside a modal, not a library this app ships.
+
+### Submodule folders
+
+A folder can be a **git submodule** instead of a plain directory of
+`.md` files — for content that doesn't fit markdown well (code, a LaTeX
+paper's full build tree, a dataset) but should still live right there in
+the project/KB's own folder tree, with a real, independently clonable git
+history. Where the rest of this app's version history is internal and
+never exposed (`workspace/.git`, see Version history above), a submodule
+folder's content is a genuine separate repo, hosted on the same Forgejo
+(archeion) instance the read-only project mirror already uses — but a
+different org (`PRAXIS_SUBMODULES_ORG`, distinct from the mirror's
+`PRAXIS_ARCHEION_ORG`), since here people actually push, unlike a mirror.
+
+**Converting a folder** (the gear icon's "Special folder" toggle,
+`POST .../folders/{path}/submodule`, `app/submodules.py` +
+`git_store.add_submodule`) requires owning every note already in that
+folder's subtree — same rule, same reasoning as deleting a folder (an
+all-or-nothing action over content that might include someone else's
+work). Any existing content is pushed as the new repo's first commit
+before the folder is replaced with the actual submodule (gitlink +
+`.gitmodules`), so nothing is lost — it just now lives in the submodule's
+own history instead of the workspace's. A submodule folder's `owner`/
+`remote` live in a separate per-scope registry, `.submodules.yml` at the
+notes root (`config.read_submodules_registry`) — never inside the folder
+itself, since once a path is a real gitlink, the parent repo can no longer
+track a plain file alongside it there.
+
+**No per-person write list, on purpose**: unlike a normal folder's
+`users:`, anyone with editor access to the project/KB can push — the
+point is not complicating a student's own git workflow with a second
+permission model. This is enforced on the Forgejo side instead: every
+member becomes a repo collaborator, **read** regardless of role (matching
+this app's own "reading is always open" rule) and **write** for
+editor/admin (`submodules.sync_collaborators`, resynced whenever
+membership changes — the same trigger points that already resync the
+archeion mirror's own collaborators).
+
+**History can't be force-pushed or deleted** — the repo's default branch
+gets Forgejo branch protection (`enable_force_push: false`) the moment
+it's created, before anyone can push to it at all. "Deleting" a submodule
+folder from praxis.md (the same delete button every folder has) only ever
+**unlinks** it — `git_store.remove_submodule` deinits and removes the
+local gitlink/`.gitmodules` entry, but there is no code path anywhere in
+this app that can delete the Forgejo repo itself. The repo — and its full
+history — survives, recoverable by relinking the same URL or by whoever
+actually administers that Forgejo instance. This is the strongest form of
+the "can't lose history" guarantee: not a permission check that could be
+bypassed or forgotten, but the simple absence of any delete-repo call in
+the codebase.
+
+**Not supported inside an encrypted project** — a submodule would need to
+reach Forgejo on every unlock (its checkout lives inside the vault's
+scratch copy, wiped on every reseal), and keeping a live external git
+remote for content whose whole point is staying off any second copy
+undercuts encryption's own threat model (see Encryption, below). Blocked
+outright rather than allowed to half-work.
+
+**A submodule's own contents are invisible to this app's index and
+folder tree** — `storage.all_files` and `_list_folders` both stop at any
+directory containing a `.git` entry (a submodule's checkout always has
+one), so a student's own `README.md` or nested directories inside their
+submodule never get scanned as if they were praxis.md items. Browsing into
+a submodule folder shows its clone URL and instructions, not a file
+browser — this app doesn't reimplement a git hosting UI.
+
 ## Task views
 
 Beyond the flat list, tasks support a **Kanban view**: one column per

@@ -27,10 +27,11 @@ below unset) or is temporarily unreachable.
 import os
 import shutil
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 import git
 import httpx
+
+from . import forgejo
 
 ARCHEION_URL = os.environ.get("PRAXIS_ARCHEION_URL", "").rstrip("/")
 ARCHEION_ORG = os.environ.get("PRAXIS_ARCHEION_ORG", "")
@@ -50,21 +51,15 @@ def _collaborators_configured() -> bool:
 
 
 def _api(method: str, path: str, **kw) -> httpx.Response:
-    return httpx.request(
-        method, f"{ARCHEION_URL}/api/v1{path}", auth=(BOT_USERNAME, BOT_PASSWORD), timeout=10, **kw
-    )
+    return forgejo.api(ARCHEION_URL, method, path, (BOT_USERNAME, BOT_PASSWORD), **kw)
 
 
 def _admin_api(method: str, path: str, **kw) -> httpx.Response:
-    return httpx.request(
-        method, f"{ARCHEION_URL}/api/v1{path}", auth=(ADMIN_USERNAME, ADMIN_PASSWORD), timeout=10, **kw
-    )
+    return forgejo.api(ARCHEION_URL, method, path, (ADMIN_USERNAME, ADMIN_PASSWORD), **kw)
 
 
 def _authenticated_clone_url(slug: str) -> str:
-    parts = urlsplit(ARCHEION_URL)
-    netloc = f"{BOT_USERNAME}:{BOT_PASSWORD}@{parts.netloc}"
-    return urlunsplit((parts.scheme, netloc, f"/{ARCHEION_ORG}/{slug}.git", "", ""))
+    return forgejo.authenticated_clone_url(ARCHEION_URL, ARCHEION_ORG, slug, BOT_USERNAME, BOT_PASSWORD)
 
 
 def _ensure_repo(slug: str, name: str) -> None:
@@ -122,10 +117,6 @@ def sync_project(slug: str, name: str, content_dir: Path, acting_user: str, mess
         print(f"archeion mirror: sync failed for project {slug}: {err}")
 
 
-def _forgejo_login_for(email: str) -> str:
-    return email.split("@")[0].strip().lower()
-
-
 def sync_collaborators(slug: str, name: str, members: list[str], get_email) -> None:
     """Adds/removes read-only collaborators on a project's mirror repo to
     match its current members list — never write access, see this module's
@@ -141,7 +132,7 @@ def sync_collaborators(slug: str, name: str, members: list[str], get_email) -> N
         for username in members:
             email = get_email(username)
             if email:
-                target.add(_forgejo_login_for(email))
+                target.add(forgejo.login_for_email(email))
 
         res = _admin_api("GET", f"/repos/{ARCHEION_ORG}/{slug}/collaborators")
         res.raise_for_status()

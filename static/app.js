@@ -395,6 +395,22 @@ const notesGridView = document.getElementById("notes-grid-view");
 const notesViewToggle = document.getElementById("notes-view-toggle");
 const notesBreadcrumb = document.getElementById("notes-breadcrumb");
 const newFolderBtn = document.getElementById("new-folder-btn");
+const uploadAttachmentBtn = document.getElementById("upload-attachment-btn");
+const attachmentFileInput = document.getElementById("attachment-file-input");
+const folderSettingsDialog = document.getElementById("folder-settings-dialog");
+const folderSettingsNormal = document.getElementById("folder-settings-normal");
+const folderSettingsSubmodule = document.getElementById("folder-settings-submodule");
+const folderUsersChips = document.getElementById("folder-users-chips");
+const folderUsersAdd = document.getElementById("folder-users-add");
+const folderSubmoduleToggle = document.getElementById("folder-submodule-toggle");
+const folderSubmoduleRemote = document.getElementById("folder-submodule-remote");
+const folderSettingsStatus = document.getElementById("folder-settings-status");
+const folderSettingsCloseBtn = document.getElementById("folder-settings-close");
+const folderSettingsSaveBtn = document.getElementById("folder-settings-save");
+const folderUnlinkBtn = document.getElementById("folder-unlink-btn");
+const attachmentViewerDialog = document.getElementById("attachment-viewer-dialog");
+const attachmentViewerBody = document.getElementById("attachment-viewer-body");
+const attachmentViewerCloseBtn = document.getElementById("attachment-viewer-close");
 const membersView = document.getElementById("members-view");
 const membersList = document.getElementById("members-list");
 const scopeSettingsFields = document.getElementById("scope-settings-fields");
@@ -435,7 +451,8 @@ let currentView = "home"; // "home" | "list" | "kanban" | "notes-list" | "notes-
 let homeBucket = "today"; // "today" | "this_week" | "others" — Home due-date filter
 let scopeConfig = null; // { statuses, members, role } for the current project scope — null for kb/home
 let currentNoteFolder = ""; // relative path under notes root; "" = root — see selectScope/selectHome
-let notesFoldersCache = []; // every folder path in the current scope, flat (see loadNoteFolders)
+let notesFoldersCache = []; // every folder in the current scope, flat — {path, owner, type, users, remote} (see loadNoteFolders)
+let notesAttachmentsCache = []; // attachments in currentNoteFolder only, not recursive (see loadNoteAttachments)
 
 function itemsBaseUrl() {
   if (!scope) return null;
@@ -480,6 +497,7 @@ const transferOwnerBtn = document.getElementById("transfer-owner-btn");
 const renameFileBtn = document.getElementById("rename-file-btn");
 const deleteItemBtn = document.getElementById("delete-item-btn");
 const attachNoteBtn = document.getElementById("attach-note-btn");
+const attachFileBtn = document.getElementById("attach-file-btn");
 const saveBtn = document.getElementById("save-btn");
 const historyBtn = document.getElementById("history-btn");
 const historyDialog = document.getElementById("history-dialog");
@@ -524,9 +542,35 @@ function renderPreview() {
   preview.innerHTML = linkifyReferences(renderMarkdownWithMath(cm.getValue() || ""));
 }
 
+// An attachment's serving URL embedded/linked in a note's body (see the
+// insert-attachment picker below, which is what actually writes these) —
+// pulled back out of the URL so a click can open the same in-app viewer
+// the folder browser uses, instead of navigating/downloading.
+function parseAttachmentUrl(url) {
+  try {
+    const u = new URL(url, window.location.origin);
+    const m = u.pathname.match(/\/attachments\/([^/]+)$/);
+    if (!m) return null;
+    return { filename: decodeURIComponent(m[1]), folder: u.searchParams.get("folder") || "" };
+  } catch {
+    return null;
+  }
+}
+
 preview.addEventListener("click", (e) => {
   const link = e.target.closest(".ref-link");
-  if (link) openItem(link.dataset.refId);
+  if (link) {
+    openItem(link.dataset.refId);
+    return;
+  }
+  const media = e.target.closest("img, a");
+  if (!media) return;
+  const src = media.tagName === "IMG" ? media.getAttribute("src") : media.getAttribute("href");
+  const att = src && parseAttachmentUrl(src);
+  if (att) {
+    e.preventDefault();
+    openAttachmentViewer(att);
+  }
 });
 
 // --- attach-a-note picker: search itemsCache by title/id, inserting
@@ -561,13 +605,60 @@ function renderRefPickerList(filterText) {
 }
 
 attachNoteBtn.addEventListener("click", () => {
+  refPickerMode = "note";
   refPickerSearch.value = "";
   renderRefPickerList("");
   refPickerDialog.showModal();
   refPickerSearch.focus();
 });
-refPickerSearch.addEventListener("input", () => renderRefPickerList(refPickerSearch.value));
+refPickerSearch.addEventListener("input", () => {
+  if (refPickerMode === "attachment") renderAttachmentPickerList(refPickerSearch.value);
+  else renderRefPickerList(refPickerSearch.value);
+});
 closeOnBackdropClick(refPickerDialog);
+
+// --- insert-attachment picker: same dialog/list as the note picker above,
+// switched to a different mode — lists the current item's own folder's
+// attachments instead of notes, and inserts markdown (an embedded image,
+// or a plain link for a PDF) instead of a [[id]] reference. Real markdown,
+// no new syntax: marked.parse (renderMarkdownWithMath) already turns
+// ![]()/[]() into a real <img>/<a>, and the preview click handler above
+// intercepts a click on either to open the same in-app viewer instead of
+// navigating away. ---
+
+let refPickerMode = "note"; // "note" | "attachment" — which list refPickerSearch's input drives right now
+
+async function renderAttachmentPickerList(filterText) {
+  const item = itemsCache.find((i) => i.id === currentId);
+  const folder = item ? item.folder || "" : "";
+  const res = await fetch(`${attachmentsBaseUrl()}?folder=${encodeURIComponent(folder)}`);
+  const attachments = res.ok ? await res.json() : [];
+  const q = (filterText || "").trim().toLowerCase();
+  const matches = attachments.filter((a) => !q || a.filename.toLowerCase().includes(q));
+  refPickerList.innerHTML = "";
+  for (const att of matches) {
+    const row = document.createElement("div");
+    row.className = "ref-picker-row";
+    row.innerHTML = `<span>${att.filename}</span>`;
+    row.addEventListener("click", () => {
+      const url = attachmentUrl(att);
+      const isImage = attachmentIconFor(att.filename) !== "picture_as_pdf";
+      cm.replaceSelection(isImage ? `![${att.filename}](${url})` : `[${att.filename}](${url})`);
+      refPickerDialog.close();
+      cm.focus();
+    });
+    refPickerList.appendChild(row);
+  }
+  if (!matches.length) refPickerList.innerHTML = '<span class="header-empty-hint">No attachments in this note’s folder.</span>';
+}
+
+attachFileBtn.addEventListener("click", () => {
+  refPickerMode = "attachment";
+  refPickerSearch.value = "";
+  renderAttachmentPickerList("");
+  refPickerDialog.showModal();
+  refPickerSearch.focus();
+});
 
 // --- autosave: debounced, with a hard cap so continuous typing still
 // flushes periodically, and an immediate flush when the editor closes ---
@@ -1243,6 +1334,7 @@ async function openItem(id) {
   renameFileBtn.hidden = !perms.can_rename || data.metadata.type !== "knowledge";
   deleteItemBtn.hidden = !perms.can_delete;
   attachNoteBtn.hidden = !canEditBody;
+  attachFileBtn.hidden = !canEditBody || data.metadata.type !== "knowledge";
   saveBtn.hidden = !canEditBody;
   toggleReadBtn.hidden = !canEditBody;
   await renderHeaderPanel(data.metadata, perms.can_edit_header);
@@ -1527,6 +1619,7 @@ function selectHome() {
   notesViewToggle.hidden = true;
   notesBreadcrumb.hidden = true;
   newFolderBtn.hidden = true;
+  uploadAttachmentBtn.hidden = true;
   newBtn.hidden = true;
   setView("home");
 }
@@ -1557,6 +1650,7 @@ async function selectScope(type, slug, contentType) {
   }
   const canEdit = currentRoleForScope() !== "guest";
   newFolderBtn.hidden = !isNotes || !canEdit;
+  uploadAttachmentBtn.hidden = !isNotes || !canEdit;
   const displayName = scopeConfig && scopeConfig.name ? scopeConfig.name : slug;
 
   if (isSettings) {
@@ -2258,9 +2352,185 @@ async function renderListView() {
 function directSubfolders() {
   const prefix = currentNoteFolder ? `${currentNoteFolder}/` : "";
   return notesFoldersCache
-    .filter((f) => (currentNoteFolder ? f.startsWith(prefix) && !f.slice(prefix.length).includes("/") : !f.includes("/")))
-    .sort();
+    .filter((f) => (currentNoteFolder ? f.path.startsWith(prefix) && !f.path.slice(prefix.length).includes("/") : !f.path.includes("/")))
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
+
+function attachmentsBaseUrl() {
+  if (!scope) return null;
+  return scope.type === "project" ? `/api/projects/${scope.slug}/attachments` : `/api/knowledge-bases/${scope.slug}/attachments`;
+}
+
+function attachmentUrl(att) {
+  return `${attachmentsBaseUrl()}/${encodeURIComponent(att.filename)}?folder=${encodeURIComponent(att.folder)}`;
+}
+
+function attachmentIconFor(filename) {
+  return filename.toLowerCase().endsWith(".pdf") ? "picture_as_pdf" : "image";
+}
+
+async function loadNoteAttachments() {
+  if (!attachmentsBaseUrl()) {
+    notesAttachmentsCache = [];
+    return;
+  }
+  const res = await fetch(`${attachmentsBaseUrl()}?folder=${encodeURIComponent(currentNoteFolder)}`);
+  notesAttachmentsCache = res.ok ? await res.json() : [];
+}
+
+function attachmentsInCurrentFolder() {
+  return notesAttachmentsCache.slice().sort((a, b) => a.filename.localeCompare(b.filename));
+}
+
+// Native browser viewer (no library), embedded in an in-app dialog instead
+// of navigating away — the ask was specifically "opens as a window inside",
+// not a new tab. iframe already renders a PDF with the browser's own
+// built-in viewer; an <img> does the same for an image.
+function openAttachmentViewer(att) {
+  const url = attachmentUrl(att);
+  attachmentViewerBody.innerHTML =
+    attachmentIconFor(att.filename) === "picture_as_pdf"
+      ? `<iframe src="${url}" title="${escapeAttr(att.filename)}"></iframe>`
+      : `<img src="${url}" alt="${escapeAttr(att.filename)}" />`;
+  attachmentViewerDialog.showModal();
+}
+
+attachmentViewerCloseBtn.addEventListener("click", () => attachmentViewerDialog.close());
+closeOnBackdropClick(attachmentViewerDialog);
+
+async function deleteAttachment(att, e) {
+  e.stopPropagation();
+  if (!confirm(`Delete "${att.filename}"? This can't be undone.`)) return;
+  const res = await fetch(`${attachmentsBaseUrl()}/${encodeURIComponent(att.filename)}?folder=${encodeURIComponent(att.folder)}`, {
+    method: "DELETE",
+  });
+  if (res.ok) {
+    await loadNoteAttachments();
+    renderCurrentView();
+  } else {
+    showToast((await res.json()).detail || "Could not delete attachment.", "error");
+  }
+}
+
+uploadAttachmentBtn.addEventListener("click", () => attachmentFileInput.click());
+attachmentFileInput.addEventListener("change", async () => {
+  const file = attachmentFileInput.files[0];
+  attachmentFileInput.value = "";
+  if (!file) return;
+  const formData = new FormData();
+  formData.append("folder", currentNoteFolder);
+  formData.append("file", file);
+  const res = await fetch(attachmentsBaseUrl(), { method: "POST", body: formData });
+  if (res.ok) {
+    await loadNoteAttachments();
+    renderCurrentView();
+  } else {
+    showToast((await res.json()).detail || "Could not upload file.", "error");
+  }
+});
+
+// --- folder settings (gear icon): write-ACL (users) for a normal folder,
+// or the git remote link for a submodule one — see docs/design/schema.md ---
+
+let folderSettingsPath = null;
+let folderSettingsUsers = [];
+
+function renderFolderUsersChips() {
+  folderUsersChips.innerHTML = folderSettingsUsers
+    .map((u) => `<span class="tag-chip">${avatarHTML(u)} ${displayNameFor(u)}<button type="button" data-user="${u}">&times;</button></span>`)
+    .join("");
+  for (const btn of folderUsersChips.querySelectorAll("button")) {
+    btn.addEventListener("click", () => {
+      folderSettingsUsers = folderSettingsUsers.filter((u) => u !== btn.dataset.user);
+      renderFolderUsersChips();
+    });
+  }
+  folderUsersAdd.value = "";
+}
+
+attachUserPicker(folderUsersAdd, {
+  getCandidates: () => memberCandidates(folderSettingsUsers),
+  onSelect: (candidate) => {
+    folderSettingsUsers = [...folderSettingsUsers, candidate.id];
+    renderFolderUsersChips();
+  },
+});
+
+function openFolderSettings(folder) {
+  folderSettingsPath = folder.path;
+  folderSettingsUsers = [...(folder.users || [])];
+  folderSettingsStatus.textContent = "";
+  const isSubmodule = folder.type === "submodule";
+  folderSettingsNormal.hidden = isSubmodule;
+  folderSettingsSubmodule.hidden = !isSubmodule;
+  folderSubmoduleToggle.checked = isSubmodule;
+  // Turning it ON here converts the folder (see the "change" handler
+  // below); turning it back OFF isn't offered as a toggle — unlinking is
+  // its own deliberate button/action (folderUnlinkBtn), matching how
+  // "delete" for a submodule only ever unlinks, never a plain checkbox
+  // flip (docs/design/schema.md).
+  folderSubmoduleToggle.disabled = isSubmodule;
+  folderSubmoduleRemote.value = folder.remote || "";
+  renderFolderUsersChips();
+  folderSettingsDialog.showModal();
+}
+
+folderSettingsCloseBtn.addEventListener("click", () => folderSettingsDialog.close());
+closeOnBackdropClick(folderSettingsDialog);
+
+folderSettingsSaveBtn.addEventListener("click", async () => {
+  folderSettingsStatus.textContent = "Saving…";
+  const res = await fetch(`${foldersUrl()}/${folderSettingsPath}/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ users: folderSettingsUsers }),
+  });
+  if (res.ok) {
+    await loadNoteFolders();
+    renderCurrentView();
+    folderSettingsDialog.close();
+  } else {
+    folderSettingsStatus.textContent = (await res.json()).detail || "Could not save.";
+  }
+});
+
+folderSubmoduleToggle.addEventListener("change", async () => {
+  if (!folderSubmoduleToggle.checked) return; // see openFolderSettings — turning it off isn't a thing here
+  const path = folderSettingsPath;
+  if (!confirm(`Turn "${path.split("/").pop()}" into a git submodule? You need to own every note already in it, and this can't be undone from here (only unlinked afterward).`)) {
+    folderSubmoduleToggle.checked = false;
+    return;
+  }
+  folderSubmoduleToggle.disabled = true;
+  folderSettingsStatus.textContent = "Creating the repo on Forgejo…";
+  const res = await fetch(`${foldersUrl()}/${path}/submodule`, { method: "POST" });
+  if (res.ok) {
+    await loadNoteFolders();
+    await loadItems();
+    renderCurrentView();
+    folderSettingsDialog.close();
+  } else {
+    folderSubmoduleToggle.checked = false;
+    folderSubmoduleToggle.disabled = false;
+    folderSettingsStatus.textContent = (await res.json()).detail || "Could not convert this folder.";
+  }
+});
+
+folderUnlinkBtn.addEventListener("click", async () => {
+  const path = folderSettingsPath;
+  if (!confirm(`Unlink "${path.split("/").pop()}"? The repo stays on Forgejo — this only removes it from praxis.md.`)) return;
+  const res = await fetch(`${foldersUrl()}/${path}`, { method: "DELETE" });
+  if (res.ok) {
+    if (currentNoteFolder === path || currentNoteFolder.startsWith(`${path}/`)) {
+      currentNoteFolder = path.split("/").slice(0, -1).join("/");
+    }
+    await loadNoteFolders();
+    await loadItems();
+    folderSettingsDialog.close();
+  } else {
+    folderSettingsStatus.textContent = (await res.json()).detail || "Could not unlink this folder.";
+  }
+});
 
 function notesInCurrentFolder() {
   return itemsCache
@@ -2367,10 +2637,19 @@ async function moveNoteToFolder(noteId, folderPath) {
 // Server enforces "owner of every note inside" (see main.py's
 // _delete_folder) — this just surfaces whatever it says rather than
 // re-deriving the same rule client-side, same spirit as item permissions.
-async function deleteFolder(folderPath, e) {
+async function deleteFolder(folder, e) {
   e.stopPropagation();
+  const folderPath = folder.path;
   const name = folderPath.split("/").pop();
-  if (!confirm(`Delete folder "${name}" and everything inside it? This can't be undone.`)) return;
+  // A submodule folder's DELETE only ever unlinks the reference — the repo
+  // stays on Forgejo (see main.py's _delete_folder_or_unlink) — so the
+  // confirmation says that, not "can't be undone", which would be wrong
+  // here (it's the one folder action that's trivially reversible: relink
+  // the same URL, or ask a Forgejo admin).
+  const prompt = folder.type === "submodule"
+    ? `Unlink "${name}"? The repo stays on Forgejo — this only removes it from praxis.md.`
+    : `Delete folder "${name}" and everything inside it? This can't be undone.`;
+  if (!confirm(prompt)) return;
   const res = await fetch(`${foldersUrl()}/${folderPath}`, { method: "DELETE" });
   if (res.ok) {
     if (currentNoteFolder === folderPath || currentNoteFolder.startsWith(`${folderPath}/`)) {
@@ -2388,6 +2667,11 @@ function rowDeleteButtonHTML(label) {
     '<span class="material-symbols-outlined" aria-hidden="true">delete</span></button>';
 }
 
+function rowSettingsButtonHTML(label) {
+  return `<button type="button" class="btn-icon row-settings-btn" title="${label}" aria-label="${label}">` +
+    '<span class="material-symbols-outlined" aria-hidden="true">settings</span></button>';
+}
+
 // Mirrors deleteFolder's shape — server enforces "owner only" (see
 // main.py's _delete_item), this just surfaces whatever it says. Same
 // DELETE route the single-item editor's own delete button already uses.
@@ -2403,20 +2687,28 @@ async function deleteNoteItem(note, e) {
 }
 
 async function renderNotesList() {
+  await loadNoteAttachments();
   notesListView.innerHTML = "";
   renderNotesBreadcrumb();
+  const canEditScope = currentRoleForScope() !== "guest";
 
   const table = document.createElement("div");
   table.className = "notes-table";
   table.innerHTML = '<div class="notes-table-header"><span>Name</span><span>Owner</span><span>Modified</span></div>';
 
-  for (const folderPath of directSubfolders()) {
+  for (const folder of directSubfolders()) {
     const row = document.createElement("div");
     row.className = "notes-table-row";
-    row.innerHTML = `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">folder</span> ${folderPath.split("/").pop()}${rowDeleteButtonHTML("Delete folder")}</span><span></span><span></span>`;
-    row.addEventListener("click", folderTileClick(folderPath));
-    row.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folderPath, e));
-    makeFolderDropTarget(row, folderPath);
+    const icon = folder.type === "submodule" ? "deployed_code" : "folder";
+    const deleteLabel = folder.type === "submodule" ? "Unlink folder" : "Delete folder";
+    row.innerHTML =
+      `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">${icon}</span> ${folder.path.split("/").pop()}${canEditScope ? rowSettingsButtonHTML("Folder settings") : ""}${canEditScope ? rowDeleteButtonHTML(deleteLabel) : ""}</span><span></span><span></span>`;
+    row.addEventListener("click", folderTileClick(folder.path));
+    if (canEditScope) {
+      row.querySelector(".row-settings-btn").addEventListener("click", (e) => { e.stopPropagation(); openFolderSettings(folder); });
+      row.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folder, e));
+    }
+    makeFolderDropTarget(row, folder.path);
     table.appendChild(row);
   }
   for (const note of notesInCurrentFolder()) {
@@ -2432,26 +2724,45 @@ async function renderNotesList() {
     makeNoteDraggable(row, note);
     table.appendChild(row);
   }
+  for (const att of attachmentsInCurrentFolder()) {
+    const row = document.createElement("div");
+    row.className = "notes-table-row";
+    const isOwner = att.owner === currentUser();
+    row.innerHTML =
+      `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">${attachmentIconFor(att.filename)}</span> ${att.filename}${isOwner ? rowDeleteButtonHTML("Delete attachment") : ""}</span>` +
+      `<span>${att.owner ? avatarHTML(att.owner, "avatar-owner") + " " + displayNameFor(att.owner) : ""}</span>` +
+      `<span>${att.uploaded || ""}</span>`;
+    row.addEventListener("click", () => openAttachmentViewer(att));
+    if (isOwner) row.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteAttachment(att, e));
+    table.appendChild(row);
+  }
   notesListView.appendChild(table);
 }
 
 async function renderNotesGrid() {
+  await loadNoteAttachments();
   notesGridView.innerHTML = "";
   renderNotesBreadcrumb();
+  const canEditScope = currentRoleForScope() !== "guest";
 
   const grid = document.createElement("div");
   grid.className = "notes-grid";
 
-  for (const folderPath of directSubfolders()) {
+  for (const folder of directSubfolders()) {
     const tile = document.createElement("div");
     tile.className = "notes-tile notes-tile-folder";
+    const icon = folder.type === "submodule" ? "deployed_code" : "folder";
+    const deleteLabel = folder.type === "submodule" ? "Unlink folder" : "Delete folder";
     tile.innerHTML =
-      `<div class="notes-tile-icon"><span class="material-symbols-outlined" aria-hidden="true">folder</span></div>` +
-      `<div class="notes-tile-name">${folderPath.split("/").pop()}</div>` +
-      rowDeleteButtonHTML("Delete folder");
-    tile.addEventListener("click", folderTileClick(folderPath));
-    tile.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folderPath, e));
-    makeFolderDropTarget(tile, folderPath);
+      `<div class="notes-tile-icon"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></div>` +
+      `<div class="notes-tile-name">${folder.path.split("/").pop()}</div>` +
+      (canEditScope ? rowSettingsButtonHTML("Folder settings") + rowDeleteButtonHTML(deleteLabel) : "");
+    tile.addEventListener("click", folderTileClick(folder.path));
+    if (canEditScope) {
+      tile.querySelector(".row-settings-btn").addEventListener("click", (e) => { e.stopPropagation(); openFolderSettings(folder); });
+      tile.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folder, e));
+    }
+    makeFolderDropTarget(tile, folder.path);
     grid.appendChild(tile);
   }
   for (const note of notesInCurrentFolder()) {
@@ -2469,6 +2780,21 @@ async function renderNotesGrid() {
     tile.addEventListener("click", () => openItem(note.id));
     if (isOwner) tile.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteNoteItem(note, e));
     makeNoteDraggable(tile, note);
+    grid.appendChild(tile);
+  }
+  for (const att of attachmentsInCurrentFolder()) {
+    const tile = document.createElement("div");
+    tile.className = "notes-tile";
+    const isOwner = att.owner === currentUser();
+    tile.innerHTML =
+      `<div class="notes-tile-titlebar">` +
+      `<span class="notes-tile-icon"><span class="material-symbols-outlined" aria-hidden="true">${attachmentIconFor(att.filename)}</span></span>` +
+      `<span class="notes-tile-name">${att.filename}</span>` +
+      `</div>` +
+      `<div class="notes-tile-footer">${att.owner ? avatarHTML(att.owner, "avatar-owner") + `<span class="notes-tile-owner-name">${displayNameFor(att.owner)}</span>` : ""}</div>` +
+      (isOwner ? rowDeleteButtonHTML("Delete attachment") : "");
+    tile.addEventListener("click", () => openAttachmentViewer(att));
+    if (isOwner) tile.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteAttachment(att, e));
     grid.appendChild(tile);
   }
   notesGridView.appendChild(grid);
