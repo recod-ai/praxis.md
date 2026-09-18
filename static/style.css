@@ -543,16 +543,11 @@ select {
 }
 .notes-tile-folder .notes-tile-icon { font-size: 34px; }
 .notes-tile-folder .notes-tile-name { font-size: 12.5px; }
-.notes-tile .row-delete-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  background: var(--surface-1);
-}
+.notes-tile .row-delete-btn,
 .notes-tile .row-settings-btn {
   position: absolute;
   top: 6px;
-  right: 32px;
+  right: 6px;
   background: var(--surface-1);
 }
 

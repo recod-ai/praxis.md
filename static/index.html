@@ -321,20 +321,20 @@
       <p class="muted">Anyone with access can see what's inside. Writing here (new notes, uploads, subfolders) is open to any editor, unless you name specific people below.</p>
       <div id="folder-users-chips" class="chip-list"></div>
       <input type="text" id="folder-users-add" autocomplete="off" placeholder="Add a person who can write here…" />
+      <label class="folder-settings-toggle">
+        <input type="checkbox" id="folder-submodule-toggle" /> Turn into a git submodule (own repo on Forgejo)
+      </label>
     </div>
     <div id="folder-settings-submodule" hidden>
       <p class="muted">This is a git submodule — anyone with editor access can clone/push, no per-person list. History can't be force-pushed or deleted from here.</p>
       <label>Clone URL
         <input type="text" id="folder-submodule-remote" readonly />
       </label>
-      <button type="button" id="folder-unlink-btn" class="btn-tonal">Unlink (keeps the repo on Forgejo)</button>
     </div>
-    <label class="folder-settings-toggle">
-      <input type="checkbox" id="folder-submodule-toggle" /> Special folder (git submodule)
-    </label>
     <div class="dialog-actions">
       <span id="folder-settings-status"></span>
       <span class="dialog-actions-spacer"></span>
+      <button type="button" id="folder-delete-btn" class="btn-tonal">Delete folder</button>
       <button type="button" id="folder-settings-close">Close</button>
       <button type="button" id="folder-settings-save" class="btn-primary">Save</button>
     </div>

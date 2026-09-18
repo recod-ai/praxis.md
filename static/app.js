@@ -407,7 +407,7 @@ const folderSubmoduleRemote = document.getElementById("folder-submodule-remote")
 const folderSettingsStatus = document.getElementById("folder-settings-status");
 const folderSettingsCloseBtn = document.getElementById("folder-settings-close");
 const folderSettingsSaveBtn = document.getElementById("folder-settings-save");
-const folderUnlinkBtn = document.getElementById("folder-unlink-btn");
+const folderDeleteBtn = document.getElementById("folder-delete-btn");
 const attachmentViewerDialog = document.getElementById("attachment-viewer-dialog");
 const attachmentViewerBody = document.getElementById("attachment-viewer-body");
 const attachmentViewerCloseBtn = document.getElementById("attachment-viewer-close");
@@ -2463,14 +2463,13 @@ function openFolderSettings(folder) {
   const isSubmodule = folder.type === "submodule";
   folderSettingsNormal.hidden = isSubmodule;
   folderSettingsSubmodule.hidden = !isSubmodule;
-  folderSubmoduleToggle.checked = isSubmodule;
-  // Turning it ON here converts the folder (see the "change" handler
-  // below); turning it back OFF isn't offered as a toggle — unlinking is
-  // its own deliberate button/action (folderUnlinkBtn), matching how
-  // "delete" for a submodule only ever unlinks, never a plain checkbox
-  // flip (docs/design/schema.md).
-  folderSubmoduleToggle.disabled = isSubmodule;
+  // The toggle only exists inside the normal panel (see index.html) —
+  // turning it back OFF isn't offered once a folder is already a
+  // submodule, that's what the Delete/Unlink button below is for instead.
+  folderSubmoduleToggle.checked = false;
   folderSubmoduleRemote.value = folder.remote || "";
+  folderSettingsSaveBtn.hidden = isSubmodule; // nothing to Save in submodule mode
+  folderDeleteBtn.textContent = isSubmodule ? "Unlink folder" : "Delete folder";
   renderFolderUsersChips();
   folderSettingsDialog.showModal();
 }
@@ -2516,9 +2515,19 @@ folderSubmoduleToggle.addEventListener("change", async () => {
   }
 });
 
-folderUnlinkBtn.addEventListener("click", async () => {
+// Delete (normal folder) and Unlink (submodule folder) are the same server
+// call — DELETE .../folders/{path} — main.py's _delete_folder_or_unlink
+// decides which one it actually is; this button is the one place in the
+// UI that triggers it now (see index.html — folder rows themselves no
+// longer carry their own delete icon).
+folderDeleteBtn.addEventListener("click", async () => {
   const path = folderSettingsPath;
-  if (!confirm(`Unlink "${path.split("/").pop()}"? The repo stays on Forgejo — this only removes it from praxis.md.`)) return;
+  const name = path.split("/").pop();
+  const isSubmodule = !folderSettingsSubmodule.hidden;
+  const prompt = isSubmodule
+    ? `Unlink "${name}"? The repo stays on Forgejo — this only removes it from praxis.md.`
+    : `Delete folder "${name}" and everything inside it? This can't be undone.`;
+  if (!confirm(prompt)) return;
   const res = await fetch(`${foldersUrl()}/${path}`, { method: "DELETE" });
   if (res.ok) {
     if (currentNoteFolder === path || currentNoteFolder.startsWith(`${path}/`)) {
@@ -2528,7 +2537,7 @@ folderUnlinkBtn.addEventListener("click", async () => {
     await loadItems();
     folderSettingsDialog.close();
   } else {
-    folderSettingsStatus.textContent = (await res.json()).detail || "Could not unlink this folder.";
+    folderSettingsStatus.textContent = (await res.json()).detail || "Could not delete this folder.";
   }
 });
 
@@ -2634,34 +2643,6 @@ async function moveNoteToFolder(noteId, folderPath) {
   }
 }
 
-// Server enforces "owner of every note inside" (see main.py's
-// _delete_folder) — this just surfaces whatever it says rather than
-// re-deriving the same rule client-side, same spirit as item permissions.
-async function deleteFolder(folder, e) {
-  e.stopPropagation();
-  const folderPath = folder.path;
-  const name = folderPath.split("/").pop();
-  // A submodule folder's DELETE only ever unlinks the reference — the repo
-  // stays on Forgejo (see main.py's _delete_folder_or_unlink) — so the
-  // confirmation says that, not "can't be undone", which would be wrong
-  // here (it's the one folder action that's trivially reversible: relink
-  // the same URL, or ask a Forgejo admin).
-  const prompt = folder.type === "submodule"
-    ? `Unlink "${name}"? The repo stays on Forgejo — this only removes it from praxis.md.`
-    : `Delete folder "${name}" and everything inside it? This can't be undone.`;
-  if (!confirm(prompt)) return;
-  const res = await fetch(`${foldersUrl()}/${folderPath}`, { method: "DELETE" });
-  if (res.ok) {
-    if (currentNoteFolder === folderPath || currentNoteFolder.startsWith(`${folderPath}/`)) {
-      currentNoteFolder = folderPath.split("/").slice(0, -1).join("/");
-    }
-    await loadNoteFolders();
-    await loadItems();
-  } else {
-    showToast((await res.json()).detail || "Could not delete folder.", "error");
-  }
-}
-
 function rowDeleteButtonHTML(label) {
   return `<button type="button" class="btn-icon row-delete-btn" title="${label}" aria-label="${label}">` +
     '<span class="material-symbols-outlined" aria-hidden="true">delete</span></button>';
@@ -2672,9 +2653,9 @@ function rowSettingsButtonHTML(label) {
     '<span class="material-symbols-outlined" aria-hidden="true">settings</span></button>';
 }
 
-// Mirrors deleteFolder's shape — server enforces "owner only" (see
-// main.py's _delete_item), this just surfaces whatever it says. Same
-// DELETE route the single-item editor's own delete button already uses.
+// Server enforces "owner only" (see main.py's _delete_item), this just
+// surfaces whatever it says. Same DELETE route the single-item editor's
+// own delete button already uses.
 async function deleteNoteItem(note, e) {
   e.stopPropagation();
   if (!confirm(`Delete "${note.title || note.id}"? This can't be undone.`)) return;
@@ -2700,13 +2681,11 @@ async function renderNotesList() {
     const row = document.createElement("div");
     row.className = "notes-table-row";
     const icon = folder.type === "submodule" ? "deployed_code" : "folder";
-    const deleteLabel = folder.type === "submodule" ? "Unlink folder" : "Delete folder";
     row.innerHTML =
-      `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">${icon}</span> ${folder.path.split("/").pop()}${canEditScope ? rowSettingsButtonHTML("Folder settings") : ""}${canEditScope ? rowDeleteButtonHTML(deleteLabel) : ""}</span><span></span><span></span>`;
+      `<span class="notes-name-cell"><span class="material-symbols-outlined icon-inline" aria-hidden="true">${icon}</span> ${folder.path.split("/").pop()}${canEditScope ? rowSettingsButtonHTML("Folder settings") : ""}</span><span></span><span></span>`;
     row.addEventListener("click", folderTileClick(folder.path));
     if (canEditScope) {
       row.querySelector(".row-settings-btn").addEventListener("click", (e) => { e.stopPropagation(); openFolderSettings(folder); });
-      row.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folder, e));
     }
     makeFolderDropTarget(row, folder.path);
     table.appendChild(row);
@@ -2752,15 +2731,13 @@ async function renderNotesGrid() {
     const tile = document.createElement("div");
     tile.className = "notes-tile notes-tile-folder";
     const icon = folder.type === "submodule" ? "deployed_code" : "folder";
-    const deleteLabel = folder.type === "submodule" ? "Unlink folder" : "Delete folder";
     tile.innerHTML =
       `<div class="notes-tile-icon"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></div>` +
       `<div class="notes-tile-name">${folder.path.split("/").pop()}</div>` +
-      (canEditScope ? rowSettingsButtonHTML("Folder settings") + rowDeleteButtonHTML(deleteLabel) : "");
+      (canEditScope ? rowSettingsButtonHTML("Folder settings") : "");
     tile.addEventListener("click", folderTileClick(folder.path));
     if (canEditScope) {
       tile.querySelector(".row-settings-btn").addEventListener("click", (e) => { e.stopPropagation(); openFolderSettings(folder); });
-      tile.querySelector(".row-delete-btn").addEventListener("click", (e) => deleteFolder(folder, e));
     }
     makeFolderDropTarget(tile, folder.path);
     grid.appendChild(tile);
