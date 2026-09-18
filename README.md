@@ -154,8 +154,13 @@ not something this app provisions on its own).
 Reuses the same Forgejo instance as Archeion mirroring above, but a
 **separate org** — set `PRAXIS_SUBMODULES_ORG` (the admin credentials are
 the same `PRAXIS_ARCHEION_ADMIN_USERNAME`/`PASSWORD` archeion's own
-collaborator sync already needs). Without it, turning a folder into a
-submodule fails with a clear error instead of silently no-oping — see
+collaborator sync already needs) plus `PRAXIS_SUBMODULES_PUBLIC_URL`, the
+externally-reachable URL of that same Forgejo — deliberately separate from
+`PRAXIS_ARCHEION_URL`, which is typically an internal/Docker-network
+address the server itself uses for API calls but a student's own machine
+can't reach; this second URL is only ever used for the clone URL actually
+shown to them. Without either one, turning a folder into a submodule fails
+with a clear error instead of silently no-oping — see
 `docs/design/schema.md`, "Submodule folders", for what this actually does
 and why it needs its own org rather than sharing the mirror's.
 

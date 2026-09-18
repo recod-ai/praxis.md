@@ -27,6 +27,13 @@ from . import forgejo
 from .archeion_mirror import ADMIN_PASSWORD, ADMIN_USERNAME, ARCHEION_URL
 
 SUBMODULES_ORG = os.environ.get("PRAXIS_SUBMODULES_ORG", "")
+# ARCHEION_URL is reused for server-side API calls and for the initial,
+# admin-authenticated clone/push during conversion — but it's routed over
+# the deployment's internal Docker network (e.g. http://forgejo:3000),
+# unreachable from a student's own machine. PUBLIC_URL is the externally
+# reachable address of that same Forgejo, used only for the clone URL
+# actually shown to a student (public_clone_url) — never for an API call.
+PUBLIC_URL = os.environ.get("PRAXIS_SUBMODULES_PUBLIC_URL", "").rstrip("/")
 
 
 class SubmoduleError(Exception):
@@ -34,14 +41,15 @@ class SubmoduleError(Exception):
 
 
 def _configured() -> bool:
-    return bool(ARCHEION_URL and SUBMODULES_ORG and ADMIN_USERNAME and ADMIN_PASSWORD)
+    return bool(ARCHEION_URL and SUBMODULES_ORG and ADMIN_USERNAME and ADMIN_PASSWORD and PUBLIC_URL)
 
 
 def _require_configured() -> None:
     if not _configured():
         raise SubmoduleError(
-            "Submodule folders need PRAXIS_ARCHEION_URL, PRAXIS_SUBMODULES_ORG, and "
-            "PRAXIS_ARCHEION_ADMIN_USERNAME/PASSWORD configured on the server — ask the admin."
+            "Submodule folders need PRAXIS_ARCHEION_URL, PRAXIS_SUBMODULES_ORG, "
+            "PRAXIS_SUBMODULES_PUBLIC_URL, and PRAXIS_ARCHEION_ADMIN_USERNAME/PASSWORD "
+            "configured on the server — ask the admin."
         )
 
 
@@ -82,15 +90,20 @@ def create_submodule_repo(repo_name: str) -> str:
         # "delete" action only ever unlinks the reference (see
         # git_store.remove_submodule), never the repo itself, but that
         # guarantee is worthless if a student (or anyone with push access)
-        # could rewrite/delete history themselves. `enable_force_push` is
-        # the field name in current Forgejo (Gitea-compatible) branch
-        # protection — verify this against the deployed server's actual
-        # API version before relying on it in production; this was not
-        # tested against a live Forgejo instance in this change.
+        # could rewrite/delete history themselves. Confirmed live against
+        # the deployed Forgejo (v9, codeberg.org/forgejo/forgejo:9): its
+        # branch-protection API has no separate "allow force push" field at
+        # all (checked the live swagger schema) — simply creating a
+        # protection rule for a branch is enough on its own to make it
+        # reject both a force-push ("branch main is protected from force
+        # push") and a delete of the repo's default branch. `enable_push`
+        # here only controls whether a *plain* (fast-forward) push is
+        # allowed at all — turning it off would make this a read-only
+        # mirror instead of a repo students can actually work in.
         _admin_api(
             "POST",
             f"/repos/{SUBMODULES_ORG}/{repo_name}/branch_protections",
-            json={"branch_name": branch, "enable_push": True, "enable_force_push": False},
+            json={"branch_name": branch, "enable_push": True},
         )
     except httpx.HTTPError as err:
         raise SubmoduleError(f"Could not create/protect the submodule repo on Forgejo: {err}") from err
@@ -98,10 +111,11 @@ def create_submodule_repo(repo_name: str) -> str:
 
 
 def public_clone_url(repo_name: str) -> str:
-    """The URL shown to a student — no embedded credentials, they
-    authenticate as themselves (unlike create_submodule_repo's admin URL,
-    which is only ever used once, server-side)."""
-    return f"{ARCHEION_URL}/{SUBMODULES_ORG}/{repo_name}.git"
+    """The URL shown to a student — externally reachable (PUBLIC_URL, not
+    ARCHEION_URL) and with no embedded credentials, they authenticate as
+    themselves (unlike create_submodule_repo's admin URL, which is only
+    ever used once, server-side, over the internal ARCHEION_URL)."""
+    return f"{PUBLIC_URL}/{SUBMODULES_ORG}/{repo_name}.git"
 
 
 def sync_collaborators(repo_name: str, member_roles: dict[str, str], get_email) -> None:

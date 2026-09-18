@@ -574,8 +574,12 @@ membership changes — the same trigger points that already resync the
 archeion mirror's own collaborators).
 
 **History can't be force-pushed or deleted** — the repo's default branch
-gets Forgejo branch protection (`enable_force_push: false`) the moment
-it's created, before anyone can push to it at all. "Deleting" a submodule
+gets a Forgejo branch protection rule the moment it's created, before
+anyone can push to it at all. Confirmed live against the deployed Forgejo
+(v9): merely creating that rule is enough on its own — no separate "allow
+force push" field exists in this version's API at all — to make Forgejo
+reject a force-push ("branch main is protected from force push") and a
+delete of the default branch. "Deleting" a submodule
 folder from praxis.md (the same delete button every folder has) only ever
 **unlinks** it — `git_store.remove_submodule` deinits and removes the
 local gitlink/`.gitmodules` entry, but there is no code path anywhere in
