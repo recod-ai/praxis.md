@@ -298,6 +298,30 @@ button:not(.nav-item):has(.material-symbols-outlined)[hidden] { display: none; }
 .btn-icon .material-symbols-outlined { font-size: 22px; }
 .btn-icon[hidden] { display: none; }
 
+/* Toolbar icon-only actions (Notes: new folder / upload / new) — smaller
+   than the 48dp standalone .btn-icon since these sit packed in a row next
+   to the List/Grid tabs. Two visual weights (outline vs. filled primary)
+   carry the "occasional action" vs. "the one primary action" distinction
+   alone, same as the labeled buttons they replace — no text needed once
+   the icon (folder/upload/plus) is unambiguous on its own. */
+.btn-icon-outline, .btn-icon-primary {
+  width: 34px;
+  height: 34px;
+}
+.btn-icon-outline .material-symbols-outlined, .btn-icon-primary .material-symbols-outlined { font-size: 18px; }
+.btn-icon-outline {
+  border: 1px solid var(--outline-variant);
+  color: var(--on-surface-variant);
+}
+.btn-icon-outline:hover { background: var(--surface-alt); border-color: var(--on-surface-variant); }
+.btn-icon-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.btn-icon-primary:hover { filter: brightness(1.05); box-shadow: var(--shadow-2); }
+.btn-icon-primary:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 35%, transparent); }
+.btn-icon-primary:disabled { opacity: 0.5; filter: none; box-shadow: none; }
+
 .theme-toggle { padding: 6px 14px; font-size: 12px; }
 
 input, select, textarea {
@@ -722,6 +746,12 @@ select {
   padding: 10px;
 }
 .kanban-column.drag-over { outline: 2px dashed var(--primary); outline-offset: -4px; }
+/* the status color isn't just a header accent: it tints the whole column
+   body (light enough that .kanban-card's own opaque surface-1 keeps card
+   text at full contrast) and marks each card with a matching left edge,
+   so "this column is Ready" reads at a glance, not just in the top 32px */
+.kanban-column.has-status-color { background: color-mix(in srgb, var(--col-color) 12%, var(--surface-alt)); }
+.kanban-column.has-status-color .kanban-card { border-left: 3px solid var(--col-color); }
 /* background/color come from the status's own color (config.status_color,
    inline style — see renderKanban) rather than a fixed token, since each
    project picks its own per-status palette */
@@ -1211,29 +1241,85 @@ dialog form { display: flex; flex-direction: column; gap: 12px; padding: 20px; m
    ===================================================================== */
 
 /* F05 — group the three short metadata fields (Owner / Status / Due date)
-   into a compact top row so the eye lands on the fields that carry content
-   (Tags / Subtasks / Related notes) instead of a flat stack of 8 equals.
-   Overrides #header-panel's column direction; the long fields stay full-width. */
-#header-panel { flex-flow: row wrap; align-content: flex-start; gap: 2px 8px; }
+   into one composed summary bar so the eye lands on the fields that carry
+   content (Tags / Subtasks / Related notes) instead of a flat stack of 8
+   equals. Overrides #header-panel's column direction; the long fields
+   stay full-width below the bar. */
+#header-panel { flex-flow: row wrap; align-content: flex-start; gap: 6px 8px; }
 #header-panel > .header-field { flex: 1 1 100%; }
-/* higher specificity (two ids) than the row above, so Status and Due date
-   opt out of the full-width default and share one row (Owner keeps its own
-   line — it carries an avatar + name) */
+/* higher specificity (two ids) than the row above, so these three opt out
+   of the full-width stack. Each is its own rounded pill rather than one
+   seamless bar with shared borders — #header-panel is only ~250px wide, so
+   a joined bar has nowhere to go but an awkward mid-row wrap; independent
+   pills wrap cleanly at any width and still read as one compact group via
+   the tight gap. */
+#header-panel > #header-owner-field,
 #header-panel > #header-status-field,
-#header-panel > #header-due-date-field { flex: 1 1 45%; min-width: 120px; }
+#header-panel > #header-due-date-field {
+  flex: 0 1 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--shape-full);
+  padding: 3px 12px 3px 4px;
+}
+#header-owner-field > label,
+#header-status-field > label,
+#header-due-date-field > label {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--on-surface-variant);
+}
+#header-owner-field > label { display: none; } /* the avatar+name already says "who", a label would be noise */
+#header-owner { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#header-owner-field .btn-icon, #header-status-field .btn-icon, #header-due-date-field .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+#header-owner-field .btn-icon .material-symbols-outlined { font-size: 16px; }
+/* status pill fill — same colour (and same fill-not-accent trick) the
+   Kanban column header already uses for this status, kept live by
+   updateHeaderStatusColor (app.js). A thin dot/border in the same pale
+   pastel would barely show against the pill's own white background.
+   Selector needs the "#header-panel > #header-status-field" specificity
+   (two ids) from the pill-group rule above, or that rule's own
+   background/border-color wins instead. */
+#header-panel > #header-status-field.has-status-color {
+  background: var(--status-color);
+  border-color: transparent;
+}
+#header-status-field.has-status-color > label,
+#header-status-field.has-status-color #header-status {
+  color: var(--status-text-color);
+}
+#header-status-field.has-status-color #header-status option { color: initial; }
+#header-status, #header-due-date { border: none; background: transparent; padding: 2px 0; width: auto; }
+#header-due-date { color: var(--on-surface-variant); font-size: 12px; }
+#header-due-date-field { padding-left: 10px; }
+#header-due-date-field::before {
+  font-family: "Material Symbols Outlined";
+  content: "event";
+  font-size: 15px;
+  color: var(--on-surface-variant);
+}
 
 /* F06 — reuse the per-status colour (already shown on Kanban columns) as a
-   thin bar on List-view section headers, so both views read as one dataset.
-   The colour is set inline by renderListView via --status-color. */
-.status-section.has-status-color h2 { display: flex; align-items: center; gap: 8px; }
-.status-section.has-status-color h2::before {
-  content: "";
-  flex: none;
-  width: 3px;
-  height: 13px;
-  border-radius: 2px;
+   full header band on List-view sections, the same visual weight the
+   Kanban column header gets, so both views read as one dataset instead of
+   two different features. Colour/text are set inline by renderListView via
+   --status-color/--status-text-color. */
+.status-section.has-status-color h2 {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--shape-sm);
   background: var(--status-color);
+  color: var(--status-text-color);
 }
+.status-section.has-status-color .item-card { border-left: 3px solid var(--status-color); }
 
 /* F01 — Home empty state: a friendly note plus quick-access cards for the
    projects and note bases the person actually has (built by

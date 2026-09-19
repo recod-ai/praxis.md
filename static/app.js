@@ -1235,6 +1235,7 @@ async function renderHeaderPanel(meta, canEditHeader) {
     headerStatus.innerHTML = statuses
       .map((s) => `<option value="${s}"${s === meta.status ? " selected" : ""}>${s}</option>`)
       .join("");
+    updateHeaderStatusColor();
     headerDueDate.value = meta.due_date || "";
     renderChildrenList(meta);
     renderRelatedNotesList(meta);
@@ -1306,6 +1307,26 @@ async function saveHeader() {
 for (const el of headerFields) {
   if (el !== headerTagsInput && el !== headerAssignedAdd) el.addEventListener("change", saveHeader); // tags/assigned_to commit through their own add/remove handlers
 }
+
+// F05: the compact Owner/Status/Due date summary bar (style.css) fills the
+// Status pill with the same colour Kanban/List already use for it, kept in
+// sync as the person changes the dropdown. A background fill (like the
+// Kanban column header) rather than a thin dot/border: the default pastel
+// status colors are pale enough that a hairline accent in that colour is
+// barely visible against a white pill — a filled pill with readable text
+// on top is the same trick the Kanban header already relies on.
+function updateHeaderStatusColor() {
+  const field = document.getElementById("header-status-field");
+  const color = statusColorFor(headerStatus.value);
+  if (color) {
+    field.style.setProperty("--status-color", color);
+    field.style.setProperty("--status-text-color", readableTextOn(color));
+    field.classList.add("has-status-color");
+  } else {
+    field.classList.remove("has-status-color");
+  }
+}
+headerStatus.addEventListener("change", updateHeaderStatusColor);
 
 async function openItem(id) {
   // switching to a different item while the dialog is already open (a
@@ -2375,11 +2396,13 @@ async function renderListView() {
     section.className = "status-section";
     const inStatus = tasks.filter((t) => t.status === status);
     section.innerHTML = `<h2>${status} (${inStatus.length})</h2>`;
-    // F06: the Kanban already tints its columns by status — reuse the same
-    // colour as a thin bar here so List and Kanban read as one dataset.
+    // F06: reuse the same status colour and the same full-band weight the
+    // Kanban column header uses (not just a thin accent), so List and
+    // Kanban read as one dataset, only reorganized.
     const _statusColor = statusColorFor(status);
     if (_statusColor) {
       section.style.setProperty("--status-color", _statusColor);
+      section.style.setProperty("--status-text-color", readableTextOn(_statusColor));
       section.classList.add("has-status-color");
     }
     for (const task of inStatus) section.appendChild(makeItemCard(task, canEdit));
@@ -2889,6 +2912,10 @@ async function renderKanban() {
     const inColumn = tasks.filter((t) => t.status === status);
 
     const bg = statusColorFor(status) || "transparent";
+    if (statusColorFor(status)) {
+      column.classList.add("has-status-color");
+      column.style.setProperty("--col-color", bg);
+    }
     const header = document.createElement("div");
     header.className = "kanban-column-header";
     header.style.background = bg;
@@ -2900,7 +2927,12 @@ async function renderKanban() {
       colorInput.className = "status-color-input";
       colorInput.value = statusColorFor(status) || "#ffffff";
       colorInput.title = `Color for "${status}"`;
-      colorInput.addEventListener("input", () => { header.style.background = colorInput.value; header.style.color = readableTextOn(colorInput.value); });
+      colorInput.addEventListener("input", () => {
+        header.style.background = colorInput.value;
+        header.style.color = readableTextOn(colorInput.value);
+        column.classList.add("has-status-color");
+        column.style.setProperty("--col-color", colorInput.value);
+      });
       colorInput.addEventListener("change", () => setStatusColor(status, colorInput.value));
       header.appendChild(colorInput);
     }
