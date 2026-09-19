@@ -9,6 +9,10 @@ const editorEl = document.getElementById("editor");
 const cm = CodeMirror.fromTextArea(editorEl, {
   mode: "markdown",
   lineWrapping: true,
+  // F04: measure the whole document so the editor can grow to its content
+  // (short items no longer open at a fixed 88vh, half-empty) — see the
+  // #editor-dialog[open] / .CodeMirror auto-height rules in style.css.
+  viewportMargin: Infinity,
   theme: root.getAttribute("data-theme") === "dark" ? "material-darker" : "default",
 });
 
@@ -2161,9 +2165,7 @@ async function renderHome() {
     .map((g) => ({ project: g.project, name: g.name, tasks: g.tasks.filter((t) => dateBucket(t.due_date) === homeBucket) }))
     .filter((g) => g.tasks.length);
   if (!filteredGroups.length) {
-    const empty = document.createElement("p");
-    empty.textContent = "Nothing here.";
-    homeView.appendChild(empty);
+    await renderHomeEmptyState(homeView, groups);
     return;
   }
   for (const group of filteredGroups) {
@@ -2187,6 +2189,60 @@ async function renderHome() {
       section.appendChild(card);
     }
     homeView.appendChild(section);
+  }
+}
+
+// F01: A fresh login (or an empty due-date bucket) used to show a bare
+// "Nothing here." even with projects and note bases populated in the
+// sidebar, so the app read as empty/broken. Instead, name the due-date
+// filter and surface the workspace the person actually has as quick-access
+// cards. (Recent-notes / last-touched shortcuts still need a dedicated
+// backend endpoint — see review F01.)
+async function renderHomeEmptyState(container, taskGroups) {
+  const hasAnyTasks = (taskGroups || []).some((g) => (g.tasks || []).length);
+  const [pRes, kRes] = await Promise.all([
+    fetch("/api/projects"),
+    fetch("/api/knowledge-bases"),
+  ]);
+  const projects = pRes.ok ? await pRes.json() : [];
+  const kbs = kRes.ok ? await kRes.json() : [];
+
+  const note = document.createElement("p");
+  note.className = "home-empty-note";
+  note.textContent = hasAnyTasks
+    ? "Nothing due in this window \u2014 your other tasks live under their projects."
+    : "No tasks are assigned to you yet.";
+  container.appendChild(note);
+
+  const makeGroup = (title, items, icon, onOpen) => {
+    if (!items.length) return;
+    const grp = document.createElement("div");
+    grp.className = "home-project-group";
+    grp.innerHTML = `<h2>${title}</h2>`;
+    const grid = document.createElement("div");
+    grid.className = "home-quick-grid";
+    for (const it of items) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "home-quick-card";
+      card.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
+        `<span class="home-quick-name">${it.name || it.slug}</span>`;
+      card.addEventListener("click", () => onOpen(it));
+      grid.appendChild(card);
+    }
+    grp.appendChild(grid);
+    container.appendChild(grp);
+  };
+
+  makeGroup("Projects", projects, "science", (p) => selectScope("project", p.slug, "tasks"));
+  makeGroup("Note bases", kbs, "menu_book", (k) => selectScope("kb", k.slug, "knowledge"));
+
+  if (!projects.length && !kbs.length) {
+    const hint = document.createElement("p");
+    hint.className = "home-empty-note";
+    hint.textContent = "Create a project or note base from the sidebar to get started.";
+    container.appendChild(hint);
   }
 }
 
@@ -2319,6 +2375,13 @@ async function renderListView() {
     section.className = "status-section";
     const inStatus = tasks.filter((t) => t.status === status);
     section.innerHTML = `<h2>${status} (${inStatus.length})</h2>`;
+    // F06: the Kanban already tints its columns by status — reuse the same
+    // colour as a thin bar here so List and Kanban read as one dataset.
+    const _statusColor = statusColorFor(status);
+    if (_statusColor) {
+      section.style.setProperty("--status-color", _statusColor);
+      section.classList.add("has-status-color");
+    }
     for (const task of inStatus) section.appendChild(makeItemCard(task, canEdit));
 
     if (canEdit) {

@@ -1,3 +1,10 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap');
+
+/* praxis.md — visual identity: a precise, scholarly instrument.
+   Palette: cool "paper" canvas, crisp white cards, one confident
+   petrol-teal ink accent, warm-sand tags. Type: IBM Plex (Sans for UI,
+   Mono for ids/values, Serif reserved for titles — the one journal-like
+   flourish). Shape: architectural, not pill-shaped. */
 * { box-sizing: border-box; }
 
 /* Material Symbols — one icon family/weight/optical size everywhere,
@@ -34,54 +41,57 @@
      the two this app didn't have until this pass: Secondary (chips/
      badges/tonal surfaces) and Tertiary (a second accent, used sparingly
      to avoid competing with Primary). */
-  --primary: #4f46e5;
+  --primary: #0079b8;            /* azure link/brand — from rgb(0,133,202), nudged to pass AA 4.5:1 as text & fills */
   --on-primary: #ffffff;
-  --primary-contrast: #ffffff; /* kept as an alias — see components still referencing it */
-  --primary-container: #e4e1ff;
-  --on-primary-container: #1c1a4d;
+  --primary-contrast: #ffffff;   /* kept as an alias — see components still referencing it */
+  --primary-container: #cbe7f8;
+  --on-primary-container: #002f49;
 
-  --secondary: #5b5d72;
+  --secondary: #4d5b66;          /* calm slate-blue — supporting, for tags/badges */
   --on-secondary: #ffffff;
-  --secondary-container: #e0e1f9;
-  --on-secondary-container: #181a2c;
+  --secondary-container: #e7e7e9; /* neutral grey: tags/tonal buttons read as quiet metadata, not an accent */
+  --on-secondary-container: #333336;
 
-  --tertiary: #7b5265;
+  --tertiary: #d94f00;           /* orange accent (from rgb(255,94,0)) — sparing: warn banners, highlights */
   --on-tertiary: #ffffff;
-  --tertiary-container: #ffd9e8;
-  --on-tertiary-container: #31101f;
+  --tertiary-container: #ffe0cc;
+  --on-tertiary-container: #4a1c00;
 
-  --error: #b3261e;
+  --error: #d32f2f;              /* lesson accent red — rgb(211,47,47) */
   --on-error: #ffffff;
-  --error-container: #f9dedc;
-  --on-error-container: #410e0b;
+  --error-container: #fbdad8;
+  --on-error-container: #410909;
   --danger: var(--error); /* pre-existing name, kept as an alias throughout */
 
-  --success: #146c2e; /* M3 has no "success" role either — apps add their own, same as here */
+  --success: #15803d; /* M3 has no "success" role either — apps add their own, same as here */
   --on-success: #ffffff;
 
-  --bg: #f3f2f7; /* "Background" role */
-  --on-bg: #1c1b1f;
+  --selection: #ff5e00;          /* text-selection background — exact rgb(255,94,0) */
+  --on-selection: #ffffff;
+
+  --bg: #ececed;                 /* neutral grey canvas — surfaces are grey, colour is reserved for elements */
+  --on-bg: #1b1b1d;
   --surface: #ffffff;
-  --on-surface: #1c1b1f;
-  --on-surface-variant: #49454f;
-  --border: #e1dfe8; /* "Outline" role */
-  --outline-variant: #cac4d0;
+  --on-surface: #1b1b1d;         /* neutral ink */
+  --on-surface-variant: #5b5b60;
+  --border: #dcdcde;             /* neutral grey hairline */
+  --outline-variant: #cbcbce;
 
   /* surface + elevation tint (M3 §4): each level mixes a little more
      Primary into Surface rather than just piling on shadow — see the
      --elevation-* shadows below, used together with these */
-  --surface-1: color-mix(in srgb, var(--surface) 95%, var(--primary) 5%);
-  --surface-2: color-mix(in srgb, var(--surface) 92%, var(--primary) 8%);
-  --surface-3: color-mix(in srgb, var(--surface) 89%, var(--primary) 11%);
-  --surface-alt: var(--surface-2); /* pre-existing name (was its own fixed hex, nearly identical) — now literally level 2, used all over already */
+  --surface-1: #ffffff;          /* cards stay crisp white on the grey canvas */
+  --surface-2: #f4f4f5;          /* sidebar / header rail — neutral grey, no colour tint */
+  --surface-3: #fbfbfc;          /* dialogs / menus — near-white neutral */
+  --surface-alt: var(--surface-2);
 
   /* --- elevation (M3 §4): shadow half of the pair above --- */
   --elevation-0: none;
-  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.08);
-  --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.12);
-  --elevation-3: 0 4px 12px rgba(0, 0, 0, 0.16);
-  --elevation-4: 0 6px 16px rgba(0, 0, 0, 0.18);
-  --elevation-5: 0 8px 24px rgba(0, 0, 0, 0.22);
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.10);
+  --elevation-2: 0 2px 4px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.12);
+  --elevation-3: 0 6px 22px rgba(0, 0, 0, 0.16);
+  --elevation-4: 0 10px 28px rgba(0, 0, 0, 0.20);
+  --elevation-5: 0 16px 40px rgba(0, 0, 0, 0.24);
   --shadow-1: var(--elevation-1); /* pre-existing names, kept as aliases */
   --shadow-2: var(--elevation-3);
 
@@ -95,7 +105,8 @@
   --shape-lg: 16px;
   --shape-xl: 28px;
   --shape-full: 9999px;
-  --radius: var(--shape-md); /* pre-existing name (was a literal 10px), kept as an alias — now 12px, the nearest step on the real scale */
+  --radius: var(--shape-md); /* cards/dialogs — 12px */
+  --shape-button: var(--shape-sm); /* controlled 8px corners instead of a consumer-app pill */
 
   /* --- spacing (M3 §3): the 8dp/4dp grid. Most of the app already landed
      on one of these by hand; a few genuinely-decorative micro-paddings
@@ -123,49 +134,52 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --primary: #b4a9ff;
-  --on-primary: #1c1330;
-  --primary-contrast: #1c1330;
-  --primary-container: #362f6e;
-  --on-primary-container: #e4e1ff;
+  --primary: #55b6ea;            /* azure lifted for dark (from rgb(0,133,202)) */
+  --on-primary: #00344f;
+  --primary-contrast: #00344f;
+  --primary-container: #004b70;
+  --on-primary-container: #cbe7f8;
 
-  --secondary: #c4c5dd;
-  --on-secondary: #2d2f42;
-  --secondary-container: #434659;
-  --on-secondary-container: #e0e1f9;
+  --secondary: #b6c4cf;          /* slate-blue, lifted */
+  --on-secondary: #26333d;
+  --secondary-container: #313135;
+  --on-secondary-container: #d9d9dd;
 
-  --tertiary: #eab8cd;
-  --on-tertiary: #48293a;
-  --tertiary-container: #613951;
-  --on-tertiary-container: #ffd9e8;
+  --tertiary: #ff8a4d;           /* orange, lifted for dark */
+  --on-tertiary: #4a1c00;
+  --tertiary-container: #7a3200;
+  --on-tertiary-container: #ffdcc7;
 
-  --error: #ffb4ab;
+  --error: #ffb4ab;              /* red-700's dark-theme counterpart (lighter for contrast on ink) */
   --on-error: #690005;
-  --error-container: #93000a;
+  --error-container: #931010;
   --on-error-container: #ffdad6;
   --danger: var(--error);
 
-  --success: #7ddc94;
-  --on-success: #0a3818;
+  --success: #6edf8f;
+  --on-success: #06351a;
 
-  --bg: #121016;
-  --on-bg: #e7e0e8;
-  --surface: #1d1b22;
-  --on-surface: #e7e0e8;
-  --on-surface-variant: #cac4d0;
-  --border: #34313b;
-  --outline-variant: #49454f;
+  --selection: #ff5e00;
+  --on-selection: #ffffff;
 
-  --surface-1: color-mix(in srgb, var(--surface) 95%, var(--primary) 5%);
-  --surface-2: color-mix(in srgb, var(--surface) 90%, var(--primary) 10%);
-  --surface-3: color-mix(in srgb, var(--surface) 85%, var(--primary) 15%);
+  --bg: #161618;                 /* neutral dark grey (not blue) */
+  --on-bg: #e6e6e8;
+  --surface: #1e1e21;
+  --on-surface: #e6e6e8;
+  --on-surface-variant: #a9a9b0;
+  --border: #313135;
+  --outline-variant: #3c3c41;
+
+  --surface-1: #26262a;          /* cards lift above the grey canvas — neutral, no colour tint */
+  --surface-2: #2b2b2f;          /* sidebar / header rail */
+  --surface-3: #313136;          /* dialogs / menus */
   --surface-alt: var(--surface-2);
 
   --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.4);
   --elevation-2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.45);
-  --elevation-3: 0 4px 16px rgba(0, 0, 0, 0.5);
-  --elevation-4: 0 6px 20px rgba(0, 0, 0, 0.55);
-  --elevation-5: 0 8px 28px rgba(0, 0, 0, 0.6);
+  --elevation-3: 0 6px 22px rgba(0, 0, 0, 0.55);
+  --elevation-4: 0 10px 28px rgba(0, 0, 0, 0.6);
+  --elevation-5: 0 16px 40px rgba(0, 0, 0, 0.66);
   --shadow-1: var(--elevation-1);
   --shadow-2: var(--elevation-3);
 
@@ -175,12 +189,14 @@
 html, body {
   height: 100%;
   margin: 0;
-  font-family: "Roboto", "Segoe UI", system-ui, sans-serif;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
   background: var(--bg);
   color: var(--on-surface);
 }
 body { display: flex; }
+::selection { background: var(--selection); color: var(--on-selection); }
+.CodeMirror-selected, .CodeMirror-focused .CodeMirror-selected { background: color-mix(in srgb, var(--selection) 28%, transparent) !important; }
 
 /* --- type scale (M3 §2): the same five role families (Display/Headline/
    Title/Body/Label) and their internal weight/line-height relationships,
@@ -224,7 +240,7 @@ button {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--primary);
-  border-radius: var(--shape-full);
+  border-radius: var(--shape-button);
   padding: 8px 16px;
   cursor: pointer;
   transition: background var(--motion-fast) var(--easing-standard), border-color var(--motion-fast) var(--easing-standard), box-shadow var(--motion-fast) var(--easing-standard);
@@ -239,7 +255,7 @@ button:not(.nav-item):has(.material-symbols-outlined)[hidden] { display: none; }
   background: var(--primary);
   color: var(--primary-contrast);
   border-color: transparent;
-  font-weight: 700;
+  font-weight: 600;
 }
 .btn-primary:hover { background: var(--primary); border-color: transparent; box-shadow: var(--shadow-2); filter: brightness(1.05); }
 .btn-primary:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 35%, transparent); }
@@ -354,7 +370,7 @@ select {
    behind it. 54px = the hamburger's right edge (58) minus this sidebar's
    own 12px padding, plus an 8px gap. */
 #sidebar-header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding-left: 54px; }
-.brand { font-weight: 700; font-size: 15px; letter-spacing: 0.2px; }
+.brand { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 17px; letter-spacing: 0.1px; }
 
 #user-box { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--on-surface-variant); }
 #current-user-label { flex: 1; font-weight: 700; color: var(--on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -404,19 +420,18 @@ select {
 }
 .nav-item:hover { background: var(--surface); border-color: transparent; }
 .nav-item:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
-.nav-item.active { background: var(--primary); color: var(--primary-contrast); font-weight: 700; }
+.nav-item.active { background: var(--primary-container); color: var(--on-primary-container); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
 
 .nav-section { margin-top: 6px; }
 .nav-section-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--on-surface-variant);
-  padding: 6px 6px 2px 10px;
+  padding: 8px 6px 4px 10px;
 }
 .nav-section-title button.btn-icon { width: 22px; height: 22px; }
 .nav-section-title button.btn-icon .material-symbols-outlined { font-size: 16px; }
@@ -436,6 +451,8 @@ select {
    inside an already-compact nav row, not a standalone .btn-icon target. */
 .nav-gear-btn {
   flex: none;
+  opacity: 0;                    /* F08: stays out of the way until the row is hovered/focused */
+  transition: opacity var(--motion-fast, 120ms) ease;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -450,7 +467,10 @@ select {
 .nav-gear-btn .material-symbols-outlined { font-size: 18px; }
 .nav-gear-btn:hover { background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
 .nav-gear-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--on-surface-variant) 25%, transparent); }
-.nav-gear-btn.active { background: var(--primary); color: var(--primary-contrast); }
+.nav-gear-btn.active,
+.nav-group-header:hover .nav-gear-btn,
+.nav-gear-btn:focus-visible { opacity: 1; }
+.nav-gear-btn.active { background: var(--primary-container); color: var(--on-primary-container); }
 
 /* elegant underline tabs, sit at the top of the main content, not a segmented control */
 #view-toggle, #home-filter, #notes-view-toggle { display: flex; gap: 20px; border-bottom: 2px solid var(--border); }
@@ -486,7 +506,7 @@ select {
   align-items: center;
   padding: 8px 10px;
 }
-.notes-table-header { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); border-bottom: 1px solid var(--border); }
+.notes-table-header { font-size: 12px; font-weight: 600; letter-spacing: 0.01em; color: var(--on-surface-variant); border-bottom: 1px solid var(--border); }
 .notes-table-row { border-bottom: 1px solid var(--border); cursor: pointer; border-radius: var(--shape-sm); }
 .notes-table-row:hover { background: var(--surface-alt); }
 .notes-name-cell { display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -513,7 +533,7 @@ select {
   overflow: hidden;
   box-shadow: var(--shadow-1);
 }
-.notes-tile:hover { box-shadow: var(--shadow-2); }
+.notes-tile:hover { box-shadow: var(--shadow-2); border-color: color-mix(in srgb, var(--on-surface) 22%, var(--border)); }
 
 .notes-tile-titlebar { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .notes-tile-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
@@ -569,7 +589,7 @@ select {
 #main { flex: 1; min-width: 0; overflow: auto; padding: 20px 24px 20px 56px; }
 
 #main-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-#main-title { font-size: 18px; margin: 0; }
+#main-title { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 20px; letter-spacing: 0.1px; margin: 0; }
 #main-topbar { display: flex; align-items: center; gap: 16px; }
 
 .board-view { display: flex; flex-direction: column; gap: 8px; }
@@ -577,10 +597,10 @@ select {
 
 #home-add-personal-task { margin-bottom: 20px; }
 .home-project-group { margin-bottom: 20px; }
-.home-project-group h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); margin: 0 0 8px; }
+.home-project-group h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--on-surface-variant); margin: 0 0 10px; }
 
 .status-section { margin-bottom: 18px; border-radius: var(--radius); }
-.status-section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--on-surface-variant); margin: 0 0 8px; }
+.status-section h2 { font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; color: var(--on-surface-variant); margin: 0 0 8px; }
 .status-section .item-card, .status-section .status-add-row { margin-bottom: 6px; }
 .status-section.drag-over, .notes-table-row.drag-over, .notes-tile-folder.drag-over, .breadcrumb-item.drag-over {
   outline: 2px dashed var(--primary);
@@ -609,7 +629,7 @@ select {
   cursor: pointer;
   box-shadow: var(--shadow-1);
 }
-.item-card:hover { box-shadow: var(--shadow-2); }
+.item-card:hover { box-shadow: var(--shadow-2); border-color: color-mix(in srgb, var(--on-surface) 22%, var(--border)); }
 .item-card .item-title { font-weight: 600; }
 .item-card .item-meta { display: block; font-size: 12px; color: var(--on-surface-variant); margin-top: 2px; }
 
@@ -669,7 +689,28 @@ select {
 
 /* --- kanban --- */
 
-#kanban-view { flex-direction: row; overflow-x: auto; padding-bottom: 8px; }
+#kanban-view {
+  flex-direction: row;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--outline-variant) transparent;
+  /* F02: edge shadows that only appear while there are hidden columns
+     (cover gradients scroll with content and hide the shadow at rest). */
+  background:
+    linear-gradient(to right, var(--bg), transparent 28px) 0 0 / 100% 100% no-repeat local,
+    linear-gradient(to left,  var(--bg), transparent 28px) 100% 0 / 100% 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0,0,0,.16), transparent) 0 0 / 16px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.16), transparent) 100% 0 / 16px 100% no-repeat scroll;
+}
+#kanban-view::-webkit-scrollbar { height: 10px; }
+#kanban-view::-webkit-scrollbar-track { background: transparent; }
+#kanban-view::-webkit-scrollbar-thumb {
+  background: var(--outline-variant);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
 .kanban-column {
   min-width: 240px;
   max-width: 280px;
@@ -695,10 +736,9 @@ select {
 }
 .kanban-column-header h3 {
   margin: 0;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  font-weight: 600;
   color: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -732,7 +772,7 @@ select {
   box-shadow: var(--shadow-1);
   font-size: 13px;
 }
-.kanban-card:hover { box-shadow: var(--shadow-2); }
+.kanban-card:hover { box-shadow: var(--shadow-2); border-color: color-mix(in srgb, var(--on-surface) 22%, var(--border)); }
 .kanban-card.dragging { opacity: 0.5; }
 .kanban-card .card-meta { display: block; font-size: 11px; color: var(--on-surface-variant); margin-top: 3px; }
 
@@ -764,7 +804,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 #unlock-dialog[open], #vault-secret-dialog[open] { display: flex; flex-direction: column; gap: 12px; }
 #unlock-status { color: var(--danger); }
 #vault-secret-value {
-  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
   background: var(--surface-alt);
   border: 1px solid var(--border);
   border-radius: var(--shape-sm);
@@ -810,7 +850,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .history-entry button { padding: 4px 12px; font-size: 12px; flex-shrink: 0; }
 #history-status { font-size: 12px; color: var(--on-surface-variant); }
 
-#editor-dialog[open] { width: 92vw; max-width: 1200px; height: 88vh; display: flex; flex-direction: column; }
+#editor-dialog[open] { width: 92vw; max-width: 1200px; height: auto; max-height: 88vh; min-height: min(88vh, 460px); display: flex; flex-direction: column; }
 #editor-dialog.fullscreen[open] {
   width: 100vw;
   height: 100vh;
@@ -838,7 +878,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
   color: var(--on-surface-variant);
 }
 .meta-title { flex-basis: 100%; font-size: 14px; font-weight: 600; color: var(--on-surface); }
-.meta-id { font-size: 11px; }
+.meta-id { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; }
 #save-status { font-size: 12px; color: var(--on-surface-variant); max-width: 30%; }
 
 #presence-indicator {
@@ -892,7 +932,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
    anyone drag that split — see app.js, which also remembers whatever they
    last set (localStorage) and re-applies it as inline `flex-basis`,
    overriding the percentage below. */
-#editor-body { flex: 1; display: flex; min-height: 0; }
+#editor-body { flex: 1; display: flex; min-height: 0; overflow: auto; }
 #header-panel {
   flex: 0 0 25%;
   min-width: 180px;
@@ -1056,16 +1096,19 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .user-picker-empty { padding: 8px 10px; font-size: 12px; color: var(--on-surface-variant); }
 
 #panes { flex: 1; display: flex; min-height: 0; }
-#editor-pane, #preview-pane { flex: 1; min-width: 0; overflow: auto; }
+#editor-pane, #preview-pane { flex: 1; min-width: 0; min-height: 240px; overflow: auto; }
 #editor-pane { border-right: 1px solid var(--border); }
 #editor-pane.hidden { display: none; }
-#preview { padding: 20px; max-width: 800px; margin: 0 auto; }
+#preview { padding: 24px 28px; max-width: 720px; margin: 0 auto; line-height: 1.65; }
+#preview h1, #preview h2, #preview h3 { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; line-height: 1.3; }
+#preview code, #preview pre { font-family: "IBM Plex Mono", ui-monospace, monospace; }
 
-.CodeMirror { height: 100%; font-size: 13px; background: var(--surface); color: var(--on-surface); }
+.CodeMirror { height: auto; min-height: 240px; font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace; font-size: 13px; background: var(--surface); color: var(--on-surface); }
 .CodeMirror-gutters { background: var(--surface-alt); border-color: var(--border); }
 
 /* --- new-item dialog --- */
 
+dialog h2, dialog > h3, dialog form > h3 { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; letter-spacing: 0.1px; }
 dialog form { display: flex; flex-direction: column; gap: 12px; padding: 20px; min-width: 280px; }
 .dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 #new-form-status { flex: 1; font-size: 12px; color: var(--danger); }
@@ -1077,7 +1120,7 @@ dialog form { display: flex; flex-direction: column; gap: 12px; padding: 20px; m
 #template-editor-body {
   width: 100%;
   min-height: 260px;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 12.5px;
   line-height: 1.5;
   resize: vertical;
@@ -1110,8 +1153,110 @@ dialog form { display: flex; flex-direction: column; gap: 12px; padding: 20px; m
     z-index: 15;
     box-shadow: var(--elevation-3);
   }
+
+  /* Header: let the toolbar wrap under the title instead of overflowing
+     off the right edge. */
+  #main-header { flex-direction: column; align-items: stretch; gap: var(--space-3); }
+  #main-topbar { flex-wrap: wrap; gap: var(--space-3); }
+
+  /* Dialogs: never wider than the screen. The desktop min-widths
+     (360–420px) overflow a phone viewport and force horizontal scroll —
+     drop them here and cap to the viewport. */
+  dialog { max-width: 96vw; }
+  dialog form { min-width: 0; }
+  #unlock-dialog, #vault-secret-dialog, #history-dialog,
+  #folder-settings-dialog { min-width: 0; width: 96vw; max-width: 96vw; }
+  #template-editor-dialog form { min-width: 0; }
+  #ref-picker-body { width: auto; min-width: 0; }
+  #attachment-viewer-dialog { width: 96vw; }
+
+  /* Member form stacks instead of cramming four controls onto one row. */
+  #add-member-form { flex-wrap: wrap; }
+  #add-member-form input { flex: 1 1 100%; }
+}
+
+/* Editor: the side-by-side metadata + source + preview layout is unusable
+   on a narrow screen. Below tablet width it becomes one full-width column
+   that stacks metadata → source → preview, each independently scrollable,
+   and the dialog goes full-bleed. Applies a little above the phone
+   breakpoint too, since the three-pane split is already too tight at ~700px. */
+@media (max-width: 767px) {
+  #editor-dialog[open] {
+    width: 100vw; height: 100vh; max-width: none; max-height: none;
+    inset: 0; margin: 0; border-radius: 0;
+  }
+  #editor-topbar { flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+  #meta-summary { order: -1; flex-basis: 100%; }
+  #save-status { max-width: none; }
+
+  #editor-body { flex-direction: column; }
+  #header-panel {
+    flex: 0 0 auto; width: 100%; max-width: none; max-height: 40vh;
+    border-right: none; border-bottom: 1px solid var(--border);
+  }
+  /* the drag-to-resize handle only makes sense between side-by-side panes */
+  #editor-resizer { display: none; }
+  #panes { flex-direction: column; }
+  #editor-pane { border-right: none; border-bottom: 1px solid var(--border); min-height: 44vh; }
+  #preview-pane { min-height: 44vh; }
+  #preview { padding: var(--space-4); }
 }
 
 @media (min-width: 600px) and (max-width: 839px) {
   #main { padding: var(--space-5) var(--space-6) var(--space-5) 56px; }
 }
+
+/* =====================================================================
+   Interface-review follow-ups (F01, F05, F06) — see the review doc.
+   ===================================================================== */
+
+/* F05 — group the three short metadata fields (Owner / Status / Due date)
+   into a compact top row so the eye lands on the fields that carry content
+   (Tags / Subtasks / Related notes) instead of a flat stack of 8 equals.
+   Overrides #header-panel's column direction; the long fields stay full-width. */
+#header-panel { flex-flow: row wrap; align-content: flex-start; gap: 2px 8px; }
+#header-panel > .header-field { flex: 1 1 100%; }
+/* higher specificity (two ids) than the row above, so Status and Due date
+   opt out of the full-width default and share one row (Owner keeps its own
+   line — it carries an avatar + name) */
+#header-panel > #header-status-field,
+#header-panel > #header-due-date-field { flex: 1 1 45%; min-width: 120px; }
+
+/* F06 — reuse the per-status colour (already shown on Kanban columns) as a
+   thin bar on List-view section headers, so both views read as one dataset.
+   The colour is set inline by renderListView via --status-color. */
+.status-section.has-status-color h2 { display: flex; align-items: center; gap: 8px; }
+.status-section.has-status-color h2::before {
+  content: "";
+  flex: none;
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--status-color);
+}
+
+/* F01 — Home empty state: a friendly note plus quick-access cards for the
+   projects and note bases the person actually has (built by
+   renderHomeEmptyState). */
+.home-empty-note { color: var(--on-surface-variant); font-size: 13px; margin: 4px 0 16px; }
+.home-quick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.home-quick-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-1);
+  color: var(--on-surface);
+  font: inherit;
+  cursor: pointer;
+}
+.home-quick-card:hover {
+  box-shadow: var(--shadow-2);
+  border-color: color-mix(in srgb, var(--on-surface) 22%, var(--border));
+}
+.home-quick-card .material-symbols-outlined { font-size: 20px; color: var(--on-surface-variant); flex: none; }
+.home-quick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
