@@ -425,6 +425,12 @@ const scopeIconSelect = document.getElementById("scope-icon-select");
 const scopeIconPreview = document.getElementById("scope-icon-preview");
 const scopeNameSaveBtn = document.getElementById("scope-name-save");
 const scopeEncryptionFields = document.getElementById("scope-encryption-fields");
+const scopeStatusesFields = document.getElementById("scope-statuses-fields");
+const showArchivedToggle = document.getElementById("show-archived-toggle");
+const statusEditor = document.getElementById("status-editor");
+const statusEditorRows = document.getElementById("status-editor-rows");
+const statusAddBtn = document.getElementById("status-add-btn");
+const statusSaveBtn = document.getElementById("status-save-btn");
 const encryptionStatusText = document.getElementById("encryption-status-text");
 const encryptProjectBtn = document.getElementById("encrypt-project-btn");
 const lockProjectBtn = document.getElementById("lock-project-btn");
@@ -1703,6 +1709,108 @@ function scopeMembersUrl() {
   return scope.type === "project" ? `/api/projects/${scope.slug}/members` : `/api/knowledge-bases/${scope.slug}/members`;
 }
 
+const STATUS_PALETTE = ["#e4e1ff", "#e0e1f9", "#cfe8fb", "#fdedc4", "#ffd9e8", "#d3efdc"];
+let statusDraft = [];
+
+function renderStatusesSection(data, isAdmin) {
+  showArchivedToggle.checked = showArchivedOn();
+  statusEditor.hidden = !isAdmin;
+  if (!isAdmin) return;
+  statusDraft = data.statuses.map((name) => ({
+    name,
+    original: name,
+    color: (data.status_colors || {})[name] || "#e4e1ff",
+    archived: (data.archived_statuses || []).includes(name),
+  }));
+  renderStatusEditor();
+}
+
+function renderStatusEditor() {
+  statusEditorRows.innerHTML = "";
+  statusDraft.forEach((entry, i) => {
+    const row = document.createElement("div");
+    row.className = "status-editor-row";
+
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "btn-icon";
+    up.title = "Move up";
+    up.setAttribute("aria-label", "Move up");
+    up.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>';
+    up.disabled = i === 0;
+    up.addEventListener("click", () => { [statusDraft[i - 1], statusDraft[i]] = [statusDraft[i], statusDraft[i - 1]]; renderStatusEditor(); });
+
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "btn-icon";
+    down.title = "Move down";
+    down.setAttribute("aria-label", "Move down");
+    down.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">arrow_downward</span>';
+    down.disabled = i === statusDraft.length - 1;
+    down.addEventListener("click", () => { [statusDraft[i + 1], statusDraft[i]] = [statusDraft[i], statusDraft[i + 1]]; renderStatusEditor(); });
+
+    const name = document.createElement("input");
+    name.type = "text";
+    name.value = entry.name;
+    name.maxLength = 30;
+    name.setAttribute("aria-label", "Status name");
+    name.addEventListener("input", () => { entry.name = name.value; });
+
+    const color = document.createElement("input");
+    color.type = "color";
+    color.value = entry.color;
+    color.title = "Color";
+    color.setAttribute("aria-label", "Status color");
+    color.addEventListener("input", () => { entry.color = color.value; });
+
+    const archivedLabel = document.createElement("label");
+    archivedLabel.className = "status-archived-label";
+    const archived = document.createElement("input");
+    archived.type = "checkbox";
+    archived.checked = entry.archived;
+    archived.addEventListener("change", () => { entry.archived = archived.checked; });
+    archivedLabel.append(archived, "Archived");
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn-icon";
+    remove.title = "Remove status";
+    remove.setAttribute("aria-label", "Remove status");
+    remove.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">delete</span>';
+    remove.disabled = statusDraft.length === 1;
+    remove.addEventListener("click", () => { statusDraft.splice(i, 1); renderStatusEditor(); });
+
+    row.append(up, down, name, color, archivedLabel, remove);
+    statusEditorRows.appendChild(row);
+  });
+}
+
+statusAddBtn.addEventListener("click", () => {
+  statusDraft.push({ name: "", original: null, color: STATUS_PALETTE[statusDraft.length % STATUS_PALETTE.length], archived: false });
+  renderStatusEditor();
+  const inputs = statusEditorRows.querySelectorAll('input[type="text"]');
+  inputs[inputs.length - 1].focus();
+});
+
+statusSaveBtn.addEventListener("click", async () => {
+  const res = await fetch(`/api/projects/${scope.slug}/statuses`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ statuses: statusDraft.map((e) => ({ name: e.name, original: e.original, color: e.color, archived: e.archived })) }),
+  });
+  if (res.ok) {
+    scopeConfig = await res.json();
+    renderStatusesSection(scopeConfig, true);
+    showToast("Statuses saved.");
+  } else {
+    showToast((await res.json()).detail || "Could not save statuses.", "error");
+  }
+});
+
+showArchivedToggle.addEventListener("change", () => {
+  try { localStorage.setItem(showArchivedKey(), showArchivedToggle.checked ? "1" : "0"); } catch (e) { /* preference just won't persist */ }
+});
+
 async function renderMembers() {
   membersList.innerHTML = "Loading…";
   const res = await fetch(scopeConfigUrl());
@@ -1726,6 +1834,9 @@ async function renderMembers() {
     scopeIconSelect.value = data.icon;
     scopeIconPreview.textContent = data.icon;
   }
+
+  scopeStatusesFields.hidden = scope.type !== "project";
+  if (scope.type === "project") renderStatusesSection(data, isAdmin);
 
   // encryption is projects-only (see vault.py) — a note base's settings
   // panel never shows this section at all
@@ -2334,6 +2445,23 @@ function peopleRowHTML(item) {
 // Per-status color (config.status_color server-side) — null for a kb
 // scope, which has no statuses/status_colors at all, or before scopeConfig
 // has loaded; either way the caller falls back to the plain CSS class.
+// "Show archived" is a per-viewer preference (this browser, this project),
+// not project config — the archived flag itself is what the admin sets.
+function showArchivedKey() {
+  return `praxis.showArchived.${scope ? scope.slug : ""}`;
+}
+function showArchivedOn() {
+  try { return localStorage.getItem(showArchivedKey()) === "1"; } catch (e) { return false; }
+}
+function isArchivedStatus(status) {
+  return !!(scopeConfig && (scopeConfig.archived_statuses || []).includes(status));
+}
+function visibleStatuses() {
+  if (!(scope && scope.type === "project" && scopeConfig)) return [];
+  const all = scopeConfig.statuses || [];
+  return showArchivedOn() ? all : all.filter((s) => !isArchivedStatus(s));
+}
+
 function statusColorFor(status) {
   return (scopeConfig && scopeConfig.status_colors && scopeConfig.status_colors[status]) || null;
 }
@@ -2389,13 +2517,15 @@ async function renderListView() {
   listView.innerHTML = "";
   const canEdit = currentRoleForScope() !== "guest";
 
-  const statuses = scope.type === "project" && scopeConfig ? scopeConfig.statuses : [];
+  const statuses = visibleStatuses();
   const tasks = itemsCache.filter((i) => i.type === "task");
   for (const status of statuses) {
     const section = document.createElement("div");
     section.className = "status-section";
+    const archived = isArchivedStatus(status);
+    if (archived) section.classList.add("status-archived");
     const inStatus = tasks.filter((t) => t.status === status);
-    section.innerHTML = `<h2>${status} (${inStatus.length})</h2>`;
+    section.innerHTML = `<h2>${status}${archived ? " · archived" : ""} (${inStatus.length})</h2>`;
     // F06: reuse the same status colour and the same full-band weight the
     // Kanban column header uses (not just a thin accent), so List and
     // Kanban read as one dataset, only reorganized.
@@ -2905,11 +3035,12 @@ async function renderKanban() {
   kanbanView.innerHTML = "";
   const canEdit = currentRoleForScope() !== "guest";
   const canManageColors = currentRoleForScope() === "admin";
-  const statuses = scope.type === "project" && scopeConfig ? scopeConfig.statuses : [];
+  const statuses = visibleStatuses();
   const tasks = itemsCache.filter((i) => i.type === "task");
   for (const status of statuses) {
     const column = document.createElement("div");
     column.className = "kanban-column";
+    if (isArchivedStatus(status)) column.classList.add("status-archived");
     column.dataset.status = status;
     const cardsWrap = document.createElement("div");
     cardsWrap.className = "kanban-cards";
@@ -2924,7 +3055,7 @@ async function renderKanban() {
     header.className = "kanban-column-header";
     header.style.background = bg;
     header.style.color = statusColorFor(status) ? readableTextOn(bg) : "var(--on-surface-variant)";
-    header.innerHTML = `<h3>${status} (${inColumn.length})</h3>`;
+    header.innerHTML = `<h3>${status}${isArchivedStatus(status) ? " · archived" : ""} (${inColumn.length})</h3>`;
     if (canManageColors) {
       const colorInput = document.createElement("input");
       colorInput.type = "color";

@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
     config.ensure_default_templates()  # seed workspace/templates/ once — see its docstring
     index.rebuild_all()  # the index is a cache — always rebuilt fresh from the files at startup
     sweep_task = asyncio.create_task(_idle_sweep_loop())
+    _migrate_personal_project_statuses()
     asyncio.get_running_loop().run_in_executor(None, _backfill_archeion_mirrors)
     yield
     sweep_task.cancel()
@@ -114,6 +115,17 @@ class UserProfileRequest(BaseModel):
 class KbConfigRequest(BaseModel):
     name: str
     icon: str
+
+
+class StatusEntry(BaseModel):
+    name: str
+    original: str | None = None  # the name it had before this save — how a rename is told apart from remove+add
+    color: str | None = None
+    archived: bool = False
+
+
+class StatusesRequest(BaseModel):
+    statuses: list[StatusEntry]
 
 
 class ProjectConfigRequest(BaseModel):
@@ -1297,9 +1309,11 @@ def my_tasks(user: str = Depends(get_current_user)):
             items = _list_items(config.project_dir(slug))
         except vault.ProjectLocked:
             continue
+        archived = set(config.get_archived_statuses(slug))
         assigned = [
             item for item in items
             if item.get("type") == "task" and user in (item.get("assigned_to") or [])
+            and item.get("status") not in archived
         ]
         if assigned:
             result.append({"project": slug, "name": config.get_project_name(slug), "tasks": assigned})
@@ -1390,6 +1404,7 @@ def project_config(slug: str, user: str = Depends(require_project_access)):
         # cycled fallback) so the frontend never has to reimplement that
         # logic — see config.status_color
         "status_colors": {s: config.status_color(slug, s) for s in statuses},
+        "archived_statuses": config.get_archived_statuses(slug),
         "members": config.get_member_roles(slug),
         "role": config.get_role(slug, user),
     }
@@ -1408,6 +1423,75 @@ def project_set_status_color(slug: str, status: str, req: StatusColorRequest, us
             raise HTTPException(400, str(e))
         git_store.commit_all(config.WORKSPACE_DIR, f"Set {slug}'s {status} color", user)
     return {"status_colors": {s: config.status_color(slug, s) for s in config.get_statuses(slug)}}
+
+
+def _apply_statuses(slug: str, entries: list[StatusEntry], acting_user: str, remap_removed: dict[str, str] | None = None) -> None:
+    """Saves a new status list and moves existing tasks along with it:
+    renamed statuses carry their tasks over; a removed status with tasks
+    still in it is refused (409) — unless `remap_removed` says where those
+    tasks go (only the personal-project migration uses that)."""
+    scope_dir = config.project_dir(slug)
+    content_dir, git_root = config.resolve_scope(scope_dir)
+    with git_store.LOCK:
+        try:
+            config.normalize_statuses(slug, [e.model_dump() for e in entries])
+        except ValueError as err:
+            raise HTTPException(400, str(err))
+        old = config.get_statuses(slug)
+        mapping: dict[str, str] = {}
+        for e in entries:
+            original = (e.original or e.name).strip()
+            if original in old:
+                mapping[original] = e.name.strip()
+        tasks = [i for i in _list_items(scope_dir) if i.get("type") == "task"]
+        first_visible = next((e.name.strip() for e in entries if not e.archived), entries[0].name.strip())
+        moves: list[tuple[dict, str]] = []
+        for task in tasks:
+            status = task.get("status")
+            if status in mapping:
+                new = mapping[status]
+            elif remap_removed is not None:
+                new = remap_removed.get(status, first_visible)
+            else:
+                count = sum(1 for t in tasks if t.get("status") == status)
+                raise HTTPException(409, f"{count} task(s) are still in '{status}' — move them to another status before removing it.")
+            if new != status:
+                moves.append((task, new))
+        config.set_statuses(slug, [e.model_dump() for e in entries])
+        for task, new in moves:
+            path = index.find_path_by_id(content_dir, task["id"])
+            if path is None:
+                continue
+            post = storage.load(path)
+            post.metadata["status"] = new
+            path.write_bytes(frontmatter.dumps(post).encode("utf-8"))
+            index.reindex_item(content_dir, path)
+        git_store.commit_all(config.WORKSPACE_DIR, f"Update {slug} statuses", acting_user)
+        if git_root != config.WORKSPACE_DIR:
+            git_store.commit_all(git_root, f"Update {slug} statuses", acting_user)
+        _publish_item_changed(scope_dir, None, acting_user)
+
+
+@app.put("/api/projects/{slug}/statuses")
+def project_set_statuses(slug: str, req: StatusesRequest, user: str = Depends(require_project_admin)):
+    _apply_statuses(slug, req.statuses, user)
+    _mirror_project_to_archeion(slug, user, "Update statuses")
+    return project_config(slug, user)
+
+
+def _migrate_personal_project_statuses() -> None:
+    """Personal projects created before their own todo/done default existed
+    still carry the six project-wide statuses implicitly — give each an
+    explicit todo/done list once, and move its tasks along ("done" stays,
+    everything else becomes "todo")."""
+    for slug in config.list_projects():
+        if not config.is_personal_project(slug) or config.read_project_config(slug).get("statuses"):
+            continue
+        entries = [StatusEntry(name=n) for n in config.DEFAULT_PERSONAL_STATUSES]
+        try:
+            _apply_statuses(slug, entries, "praxis", remap_removed={"done": "done"})
+        except (HTTPException, vault.ProjectLocked) as err:
+            print(f"personal status migration skipped for {slug}: {err}")
 
 
 @app.put("/api/projects/{slug}/config")

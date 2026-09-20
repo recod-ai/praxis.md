@@ -163,6 +163,21 @@
           <button type="button" id="scope-name-save" class="btn-tonal">Save</button>
         </div>
       </div>
+      <div id="scope-statuses-fields" hidden>
+        <h3 class="type-title-s" style="margin:16px 0 6px">Task statuses</h3>
+        <label class="folder-settings-toggle">
+          <input type="checkbox" id="show-archived-toggle" />
+          Show archived statuses (on the board, list and Home — only for you, in this browser)
+        </label>
+        <div id="status-editor" hidden>
+          <p class="type-body-m" style="margin:10px 0 8px">Order here is board order. An archived status is hidden unless "Show archived" is on.</p>
+          <div id="status-editor-rows"></div>
+          <div class="status-editor-actions">
+            <button type="button" id="status-add-btn"><span class="material-symbols-outlined icon-inline" aria-hidden="true">add</span> Add status</button>
+            <button type="button" id="status-save-btn" class="btn-primary">Save statuses</button>
+          </div>
+        </div>
+      </div>
       <div id="scope-encryption-fields" hidden>
         <h3 class="type-title-s" style="margin:16px 0 6px">Encryption</h3>
         <p id="encryption-status-text" class="type-body-m"></p>

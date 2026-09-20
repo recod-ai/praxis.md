@@ -30,6 +30,9 @@ KNOWLEDGE_BASES_DIR = WORKSPACE_DIR / "knowledge-bases"
 USERS_DIR = WORKSPACE_DIR / "users"
 
 DEFAULT_STATUSES = ["proposal", "backlog", "ready", "in_progress", "review", "done"]
+DEFAULT_PERSONAL_STATUSES = ["todo", "done"]
+STATUS_NAME_RE = re.compile(r"^\w[\w .\-]{0,29}$")
+MAX_STATUSES = 20
 VALID_TEMPLATE_TYPES = ("task", "knowledge")
 
 # Pastel defaults for the Kanban/status-color feature — reuses this app's
@@ -90,7 +93,59 @@ def read_project_config(slug: str) -> dict:
 
 
 def get_statuses(slug: str) -> list[str]:
-    return list(read_project_config(slug).get("statuses") or DEFAULT_STATUSES)
+    cfg = read_project_config(slug)
+    if cfg.get("statuses"):
+        return list(cfg["statuses"])
+    return list(DEFAULT_PERSONAL_STATUSES if cfg.get("personal") else DEFAULT_STATUSES)
+
+
+def get_archived_statuses(slug: str) -> list[str]:
+    """Statuses hidden from the board/list/Home unless "Show archived" is on
+    (a per-viewer toggle — see static/app.js). Kept in `statuses` order."""
+    archived = set(read_project_config(slug).get("archived_statuses") or [])
+    return [s for s in get_statuses(slug) if s in archived]
+
+
+def normalize_statuses(slug: str, entries: list[dict]) -> tuple[list[str], dict[str, str], list[str]]:
+    """Validates a proposed status list — each entry {name, color?,
+    archived?}, list order being board order — and returns (names, colors,
+    archived). Raises ValueError on anything invalid (callers make it a 400)."""
+    if not entries:
+        raise ValueError("A project needs at least one status.")
+    if len(entries) > MAX_STATUSES:
+        raise ValueError(f"At most {MAX_STATUSES} statuses.")
+    names: list[str] = []
+    colors: dict[str, str] = {}
+    archived: list[str] = []
+    previous_colors = get_status_colors(slug)
+    for index, entry in enumerate(entries):
+        name = str(entry.get("name", "")).strip()
+        if not STATUS_NAME_RE.match(name):
+            raise ValueError(f"Invalid status name: {name!r} (1-30 letters, digits, spaces, '.', '_' or '-').")
+        if name.lower() in {n.lower() for n in names}:
+            raise ValueError(f"Duplicate status: {name!r}.")
+        names.append(name)
+        color = entry.get("color") or previous_colors.get(name) or DEFAULT_STATUS_COLOR_PALETTE[index % len(DEFAULT_STATUS_COLOR_PALETTE)]
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError(f"Invalid color: {color!r} (expected #rrggbb)")
+        colors[name] = color.lower()
+        if entry.get("archived"):
+            archived.append(name)
+    if len(archived) == len(names):
+        raise ValueError("At least one status must stay visible (not archived).")
+    return names, colors, archived
+
+
+def set_statuses(slug: str, entries: list[dict]) -> None:
+    names, colors, archived = normalize_statuses(slug, entries)
+    cfg = read_project_config(slug)
+    cfg["statuses"] = names
+    cfg["status_colors"] = colors
+    if archived:
+        cfg["archived_statuses"] = archived
+    else:
+        cfg.pop("archived_statuses", None)
+    _write_project_config(slug, cfg)
 
 
 def get_status_colors(slug: str) -> dict[str, str]:
@@ -405,6 +460,7 @@ def ensure_personal_project(username: str) -> str:
             "icon": PERSONAL_PROJECT_ICON,
             "members": {username: "admin"},
             "personal": True,
+            "statuses": list(DEFAULT_PERSONAL_STATUSES),
         })
     return slug
 
