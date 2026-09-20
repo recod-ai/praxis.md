@@ -397,7 +397,9 @@ const kanbanView = document.getElementById("kanban-view");
 const notesListView = document.getElementById("notes-list-view");
 const notesGridView = document.getElementById("notes-grid-view");
 const notesViewToggle = document.getElementById("notes-view-toggle");
-const notesBreadcrumb = document.getElementById("notes-breadcrumb");
+const newMenuWrap = document.getElementById("new-menu-wrap");
+const newMenu = document.getElementById("new-menu");
+const newNoteMenuItem = document.getElementById("new-note-menu-item");
 const newFolderBtn = document.getElementById("new-folder-btn");
 const uploadAttachmentBtn = document.getElementById("upload-attachment-btn");
 const attachmentFileInput = document.getElementById("attachment-file-input");
@@ -1642,10 +1644,7 @@ function selectHome() {
   homeFilter.hidden = false;
   viewToggle.hidden = true;
   notesViewToggle.hidden = true;
-  notesBreadcrumb.hidden = true;
-  newFolderBtn.hidden = true;
-  uploadAttachmentBtn.hidden = true;
-  newBtn.hidden = true;
+  newMenuWrap.hidden = true;
   setView("home");
 }
 
@@ -1663,7 +1662,6 @@ async function selectScope(type, slug, contentType) {
   const isNotes = contentType === "knowledge";
   viewToggle.hidden = contentType !== "tasks";
   notesViewToggle.hidden = !isNotes;
-  notesBreadcrumb.hidden = !isNotes;
 
   scopeConfig = null;
   if (type === "project") {
@@ -1674,17 +1672,19 @@ async function selectScope(type, slug, contentType) {
     scopeConfig = res.ok ? await res.json() : null;
   }
   const canEdit = currentRoleForScope() !== "guest";
-  newFolderBtn.hidden = !isNotes || !canEdit;
-  uploadAttachmentBtn.hidden = !isNotes || !canEdit;
   const displayName = scopeConfig && scopeConfig.name ? scopeConfig.name : slug;
 
   if (isSettings) {
     mainTitle.textContent = `${displayName} — ${contentType === "settings" ? "Settings" : "Members"}`;
-    newBtn.hidden = true;
+    newMenuWrap.hidden = true;
     setView("members");
   } else {
+    // Notes overwrites this with the breadcrumb (renderNotesBreadcrumb,
+    // called from renderNotesList/renderNotesGrid) as soon as loadItems()
+    // below resolves — this plain version is only what's visible in the
+    // brief gap before that, and the only version Tasks ever gets.
     mainTitle.textContent = `${displayName} — ${contentType === "tasks" ? "Tasks" : "Notes"}`;
-    newBtn.hidden = !canEdit;
+    newMenuWrap.hidden = !canEdit;
     setView(isNotes ? "notes-list" : "list");
     loadItems();
   }
@@ -2634,9 +2634,13 @@ function notesInCurrentFolder() {
 }
 
 function renderNotesBreadcrumb() {
+  // Lives in #main-title itself (not a separate row below the toolbar) —
+  // "back + full path" replaces the plain "{scope} — Notes" text selectScope
+  // sets, so the path reads as part of the title instead of a second line.
+  const displayName = scopeConfig && scopeConfig.name ? scopeConfig.name : (scope ? scope.slug : "");
   const parts = currentNoteFolder ? currentNoteFolder.split("/") : [];
   let acc = "";
-  const segments = [{ label: "All notes", path: "" }];
+  const segments = [{ label: `${displayName} — Notes`, path: "" }];
   for (const part of parts) {
     acc = acc ? `${acc}/${part}` : part;
     segments.push({ label: part, path: acc });
@@ -2650,9 +2654,9 @@ function renderNotesBreadcrumb() {
       '<span class="material-symbols-outlined" aria-hidden="true">arrow_back</span></button>'
     : "";
 
-  notesBreadcrumb.innerHTML = backHTML + segments
+  mainTitle.innerHTML = backHTML + segments
     .map((s) => `<button type="button" class="breadcrumb-item" data-path="${s.path}">${s.label}</button>`)
-    .join(" / ");
+    .join('<span class="breadcrumb-sep">/</span>');
 
   const backBtn = document.getElementById("notes-back-btn");
   if (backBtn) {
@@ -2662,7 +2666,7 @@ function renderNotesBreadcrumb() {
     });
     makeFolderDropTarget(backBtn, parentPath); // drop-to-move-up-a-level too
   }
-  for (const btn of notesBreadcrumb.querySelectorAll(".breadcrumb-item")) {
+  for (const btn of mainTitle.querySelectorAll(".breadcrumb-item")) {
     btn.addEventListener("click", () => {
       currentNoteFolder = btn.dataset.path;
       renderCurrentView();
@@ -3136,7 +3140,26 @@ document.getElementById("template-editor-form").addEventListener("submit", async
   }
 });
 
-newBtn.addEventListener("click", () => openCreateDialog());
+// Notes has three things "+" can create (note/folder/upload), so it opens
+// a small menu; Tasks only ever has the one (a task), so it skips the menu
+// and creates directly, same as before this button grew a dropdown.
+newBtn.addEventListener("click", () => {
+  if (isNotesContext()) {
+    newMenu.hidden = !newMenu.hidden;
+  } else {
+    openCreateDialog();
+  }
+});
+newNoteMenuItem.addEventListener("click", () => {
+  newMenu.hidden = true;
+  openCreateDialog();
+});
+newMenu.addEventListener("click", (e) => {
+  if (e.target.closest(".dropdown-menu-item")) newMenu.hidden = true;
+});
+document.addEventListener("click", (e) => {
+  if (!newMenu.hidden && !newMenuWrap.contains(e.target)) newMenu.hidden = true;
+});
 
 document.getElementById("new-cancel").addEventListener("click", () => dialog.close());
 closeOnBackdropClick(dialog);

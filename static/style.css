@@ -507,20 +507,60 @@ select {
 }
 #view-toggle button:hover, #home-filter button:hover, #notes-view-toggle button:hover { background: transparent; color: var(--on-surface); }
 #view-toggle button.active, #home-filter button.active, #notes-view-toggle button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 700; }
-#new-folder-btn { font-size: 13px; }
+/* --- notes: path lives in #main-title itself, list (Drive-style columns),
+   grid (Drive-style tiles) --- */
 
-/* --- notes: breadcrumb, list (Drive-style columns), grid (Drive-style tiles) --- */
-
-#notes-breadcrumb { margin-top: 10px; display: flex; align-items: center; gap: 2px; font-size: 13px; color: var(--on-surface-variant); }
-#notes-breadcrumb[hidden] { display: none; }
-#notes-back-btn { width: 24px; height: 24px; margin-right: 4px; }
-#notes-back-btn .material-symbols-outlined { font-size: 16px; }
+/* renderNotesBreadcrumb() fills #main-title with [back] scope—Notes / sub /
+   sub, replacing the plain-text title Tasks/Home/Settings still use — one
+   line, the path reads as part of the title instead of a second row. */
+#main-title { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; row-gap: 4px; }
+#notes-back-btn { width: 28px; height: 28px; margin-right: 2px; flex: none; }
+#notes-back-btn .material-symbols-outlined { font-size: 18px; }
 .breadcrumb-item {
   border: none; background: transparent; box-shadow: none; padding: 2px 4px;
-  font-size: 13px; color: var(--on-surface-variant); cursor: pointer;
+  border-radius: var(--shape-sm);
+  font: inherit; color: var(--on-surface-variant); cursor: pointer;
 }
-.breadcrumb-item:last-child { color: var(--on-surface); font-weight: 600; }
-.breadcrumb-item:hover { text-decoration: underline; background: transparent; }
+.breadcrumb-item:last-child { color: var(--on-surface); }
+.breadcrumb-item:hover { background: var(--surface-alt); }
+.breadcrumb-sep { color: var(--outline-variant); font-weight: 400; }
+
+/* --- "+" menu (Notes: note/folder/upload; Tasks skips the menu and
+   creates directly, see newBtn's click handler) --- */
+.menu-wrap { position: relative; }
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--shape-md);
+  box-shadow: var(--elevation-3);
+}
+.dropdown-menu[hidden] { display: none; }
+.dropdown-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 10px;
+  border-radius: var(--shape-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--on-surface);
+  cursor: pointer;
+  text-align: left;
+}
+.dropdown-menu-item:hover { background: var(--surface-alt); }
+.dropdown-menu-item .material-symbols-outlined { font-size: 18px; color: var(--on-surface-variant); }
 
 .notes-table { display: flex; flex-direction: column; }
 .notes-table-header, .notes-table-row {

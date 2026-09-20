@@ -134,12 +134,16 @@
           <button data-view="notes-list" class="active">List</button>
           <button data-view="notes-grid">Grid</button>
         </div>
-        <button id="new-folder-btn" class="btn-icon btn-icon-outline" title="New folder" aria-label="New folder" hidden><span class="material-symbols-outlined" aria-hidden="true">create_new_folder</span></button>
-        <button id="upload-attachment-btn" class="btn-icon btn-icon-outline" title="Upload" aria-label="Upload" hidden><span class="material-symbols-outlined" aria-hidden="true">upload</span></button>
         <input type="file" id="attachment-file-input" hidden accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.svg" />
-        <button id="new-btn" class="btn-icon btn-icon-primary" title="New" aria-label="New" hidden><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
+        <div id="new-menu-wrap" class="menu-wrap" hidden>
+          <button id="new-btn" class="btn-icon btn-icon-primary" title="New" aria-label="New"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
+          <div id="new-menu" class="dropdown-menu" hidden>
+            <button type="button" id="new-note-menu-item" class="dropdown-menu-item"><span class="material-symbols-outlined" aria-hidden="true">description</span> New note</button>
+            <button type="button" id="new-folder-btn" class="dropdown-menu-item"><span class="material-symbols-outlined" aria-hidden="true">create_new_folder</span> New folder</button>
+            <button type="button" id="upload-attachment-btn" class="dropdown-menu-item"><span class="material-symbols-outlined" aria-hidden="true">upload</span> Upload</button>
+          </div>
+        </div>
       </div>
-      <div id="notes-breadcrumb" hidden></div>
     </div>
     <div id="home-view" class="board-view"></div>
     <div id="list-view" class="board-view" hidden></div>
