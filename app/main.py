@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
     config.ensure_default_templates()  # seed workspace/templates/ once — see its docstring
     index.rebuild_all()  # the index is a cache — always rebuilt fresh from the files at startup
     sweep_task = asyncio.create_task(_idle_sweep_loop())
+    asyncio.get_running_loop().run_in_executor(None, _backfill_archeion_mirrors)
     yield
     sweep_task.cancel()
     with git_store.LOCK:
@@ -280,6 +281,37 @@ def _sync_project_collaborators_to_archeion(slug: str) -> None:
     archeion_mirror.sync_collaborators(
         slug, config.get_project_name(slug), config.get_members(slug), lambda u: config.get_user_profile(u).get("email")
     )
+
+
+def _mirror_kb_to_archeion(slug: str, acting_user: str, message: str) -> None:
+    archeion_mirror.sync_project(
+        archeion_mirror.kb_repo_name(slug), config.get_kb_name(slug), config.kb_dir(slug), acting_user, message
+    )
+
+
+def _sync_kb_collaborators_to_archeion(slug: str) -> None:
+    archeion_mirror.sync_collaborators(
+        archeion_mirror.kb_repo_name(slug),
+        config.get_kb_name(slug),
+        config.get_kb_members(slug),
+        lambda u: config.get_user_profile(u).get("email"),
+    )
+
+
+def _backfill_archeion_mirrors() -> None:
+    """Brings every project and note base's archeion mirror (repo, content
+    and member access) up to date — run once at startup so scopes that
+    predate the mirror, or whose members were set before collaborator sync
+    existed, show up for everyone in them without needing an edit first.
+    Best-effort like everything in archeion_mirror."""
+    for slug in config.list_projects():
+        if vault.has_vault(slug):
+            continue
+        _mirror_project_to_archeion(slug, "praxis", "Sync mirror")
+        _sync_project_collaborators_to_archeion(slug)
+    for slug in config.list_knowledge_bases():
+        _mirror_kb_to_archeion(slug, "praxis", "Sync mirror")
+        _sync_kb_collaborators_to_archeion(slug)
 
 
 def _sanitize_relpath(raw: str) -> str:
@@ -1293,6 +1325,8 @@ def create_project(req: NewScopeRequest, user: str = Depends(get_current_user)):
     with git_store.LOCK:
         slug = config.create_project(req.name.strip(), owner=user, icon=req.icon)
         git_store.commit_all(config.WORKSPACE_DIR, f"Create project {slug}", user)
+    _mirror_project_to_archeion(slug, user, f"Create project {slug}")
+    _sync_project_collaborators_to_archeion(slug)
     return {"slug": slug, "name": config.get_project_name(slug), "icon": config.get_project_icon(slug)}
 
 
@@ -1321,6 +1355,8 @@ def create_kb(req: NewScopeRequest, user: str = Depends(get_current_user)):
     with git_store.LOCK:
         slug = config.create_kb(req.name.strip(), owner=user, icon=req.icon)
         git_store.commit_all(config.WORKSPACE_DIR, f"Create note base {slug}", user)
+    _mirror_kb_to_archeion(slug, user, f"Create note base {slug}")
+    _sync_kb_collaborators_to_archeion(slug)
     return {"slug": slug, "name": config.get_kb_name(slug), "icon": config.get_kb_icon(slug)}
 
 
@@ -1659,6 +1695,7 @@ def add_kb_member(slug: str, req: MemberRequest, user: str = Depends(require_kb_
         if req.email:
             config.link_user_email(req.username, req.email)
         git_store.commit_all(config.WORKSPACE_DIR, f"Add {req.username} to {slug}", user)
+    _sync_kb_collaborators_to_archeion(slug)
     _sync_submodule_collaborators(config.kb_dir(slug))
     return {"members": roles}
 
@@ -1668,6 +1705,7 @@ def remove_kb_member(slug: str, username: str, user: str = Depends(require_kb_ad
     with git_store.LOCK:
         roles = config.remove_kb_member(slug, username)
         git_store.commit_all(config.WORKSPACE_DIR, f"Remove {username} from {slug}", user)
+    _sync_kb_collaborators_to_archeion(slug)
     _sync_submodule_collaborators(config.kb_dir(slug))
     return {"members": roles}
 
@@ -1684,27 +1722,37 @@ def kb_folders(slug: str, user: str = Depends(require_kb_access)):
 
 @app.post("/api/knowledge-bases/{slug}/folders")
 def kb_create_folder(slug: str, req: FolderRequest, user: str = Depends(require_kb_editor)):
-    return _create_folder(config.kb_dir(slug), req, acting_user=user)
+    result = _create_folder(config.kb_dir(slug), req, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Create folder {req.path}")
+    return result
 
 
 @app.put("/api/knowledge-bases/{slug}/items/{item_id}/folder")
 def kb_move_item(slug: str, item_id: str, req: MoveRequest, user: str = Depends(require_kb_editor)):
-    return _move_item(config.kb_dir(slug), item_id, req, acting_user=user)
+    result = _move_item(config.kb_dir(slug), item_id, req, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Move {item_id}")
+    return result
 
 
 @app.delete("/api/knowledge-bases/{slug}/folders/{folder_path:path}")
 def kb_delete_folder(slug: str, folder_path: str, user: str = Depends(require_kb_editor)):
-    return _delete_folder_or_unlink(config.kb_dir(slug), folder_path, acting_user=user)
+    result = _delete_folder_or_unlink(config.kb_dir(slug), folder_path, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Delete folder {folder_path}")
+    return result
 
 
 @app.put("/api/knowledge-bases/{slug}/folders/{folder_path:path}/settings")
 def kb_folder_settings(slug: str, folder_path: str, req: FolderSettingsRequest, user: str = Depends(require_kb_editor)):
-    return _update_folder_settings(config.kb_dir(slug), folder_path, req, acting_user=user)
+    result = _update_folder_settings(config.kb_dir(slug), folder_path, req, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Update settings for folder {folder_path}")
+    return result
 
 
 @app.post("/api/knowledge-bases/{slug}/folders/{folder_path:path}/submodule")
 def kb_convert_folder_submodule(slug: str, folder_path: str, user: str = Depends(require_kb_editor)):
-    return _convert_folder_to_submodule(config.kb_dir(slug), folder_path, acting_user=user)
+    result = _convert_folder_to_submodule(config.kb_dir(slug), folder_path, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Convert folder {folder_path} to submodule")
+    return result
 
 
 @app.get("/api/knowledge-bases/{slug}/attachments")
@@ -1716,7 +1764,9 @@ def kb_list_attachments(slug: str, folder: str = "", user: str = Depends(require
 async def kb_upload_attachment(
     slug: str, folder: str = Form(""), file: UploadFile = File(...), user: str = Depends(require_kb_editor)
 ):
-    return await _save_attachment(config.kb_dir(slug), folder, file, acting_user=user)
+    result = await _save_attachment(config.kb_dir(slug), folder, file, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Upload {result['filename']}")
+    return result
 
 
 @app.get("/api/knowledge-bases/{slug}/attachments/{filename}")
@@ -1728,7 +1778,9 @@ def kb_get_attachment(slug: str, filename: str, folder: str = "", user: str = De
 
 @app.delete("/api/knowledge-bases/{slug}/attachments/{filename}")
 def kb_delete_attachment(slug: str, filename: str, folder: str = "", user: str = Depends(require_kb_editor)):
-    return _delete_attachment(config.kb_dir(slug), folder, filename, acting_user=user)
+    result = _delete_attachment(config.kb_dir(slug), folder, filename, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Delete {filename}")
+    return result
 
 
 @app.get("/api/knowledge-bases/{slug}/items")
@@ -1745,32 +1797,44 @@ def kb_get_item(slug: str, item_id: str, user: str = Depends(require_kb_access))
 def kb_create_item(slug: str, req: CreateRequest, user: str = Depends(require_kb_editor)):
     if req.type != "knowledge":
         raise HTTPException(400, "Standalone knowledge bases only hold knowledge items, not tasks")
-    return _create_item(config.kb_dir(slug), req, project_slug=None, owner=user)
+    result = _create_item(config.kb_dir(slug), req, project_slug=None, owner=user)
+    _mirror_kb_to_archeion(slug, user, f"Create {result['id']}")
+    return result
 
 
 @app.put("/api/knowledge-bases/{slug}/items/{item_id}")
 def kb_save_item(slug: str, item_id: str, req: SaveRequest, user: str = Depends(require_kb_editor)):
-    return _save_item(config.kb_dir(slug), item_id, req, acting_user=user)
+    result = _save_item(config.kb_dir(slug), item_id, req, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Save {item_id}")
+    return result
 
 
 @app.put("/api/knowledge-bases/{slug}/items/{item_id}/header")
 def kb_save_header(slug: str, item_id: str, req: HeaderUpdateRequest, user: str = Depends(require_kb_editor)):
-    return _save_header(config.kb_dir(slug), item_id, req, acting_user=user)
+    result = _save_header(config.kb_dir(slug), item_id, req, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Update {item_id} header")
+    return result
 
 
 @app.put("/api/knowledge-bases/{slug}/items/{item_id}/owner")
 def kb_transfer_owner(slug: str, item_id: str, req: TransferOwnerRequest, user: str = Depends(require_kb_editor)):
-    return _transfer_owner(config.kb_dir(slug), item_id, req, acting_user=user)
+    result = _transfer_owner(config.kb_dir(slug), item_id, req, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Transfer {item_id} to {req.new_owner}")
+    return result
 
 
 @app.put("/api/knowledge-bases/{slug}/items/{item_id}/filename")
 def kb_rename_item(slug: str, item_id: str, req: RenameRequest, user: str = Depends(require_kb_editor)):
-    return _rename_item_file(config.kb_dir(slug), item_id, req, acting_user=user)
+    result = _rename_item_file(config.kb_dir(slug), item_id, req, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Rename {item_id} to {req.filename}")
+    return result
 
 
 @app.delete("/api/knowledge-bases/{slug}/items/{item_id}")
 def kb_delete_item(slug: str, item_id: str, user: str = Depends(require_kb_editor)):
-    return _delete_item(config.kb_dir(slug), item_id, acting_user=user)
+    result = _delete_item(config.kb_dir(slug), item_id, acting_user=user)
+    _mirror_kb_to_archeion(slug, user, f"Delete {item_id}")
+    return result
 
 
 @app.get("/api/knowledge-bases/{slug}/items/{item_id}/history")
