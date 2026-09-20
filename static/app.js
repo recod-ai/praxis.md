@@ -2041,8 +2041,23 @@ function attachUserPicker(input, { getCandidates, onSelect, maxResults = 8 }) {
   function positionMenu() {
     const rect = input.getBoundingClientRect();
     menu.style.left = `${rect.left}px`;
-    menu.style.top = `${rect.bottom + 4}px`;
     menu.style.width = `${Math.max(rect.width, 220)}px`;
+    // the menu is position:fixed, so an input near the bottom of the
+    // viewport (e.g. add-member, far down a long Settings page) would push
+    // the list off-screen where it can't be scrolled to — open upward
+    // instead when there's more room above, and cap the height either way
+    const below = window.innerHeight - rect.bottom - 12;
+    const above = rect.top - 12;
+    const openUp = below < 160 && above > below;
+    const room = Math.max(96, Math.min(240, openUp ? above : below));
+    menu.style.maxHeight = `${room}px`;
+    if (openUp) {
+      menu.style.top = "auto";
+      menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+    } else {
+      menu.style.bottom = "auto";
+      menu.style.top = `${rect.bottom + 4}px`;
+    }
   }
 
   function closeMenu() {
@@ -2118,6 +2133,12 @@ function attachUserPicker(input, { getCandidates, onSelect, maxResults = 8 }) {
   window.addEventListener("resize", () => {
     if (!menu.hidden) positionMenu();
   });
+  // #main (not the window) is what scrolls; capture catches any scroller.
+  // Scrolling the menu's own list must not reposition or close it.
+  window.addEventListener("scroll", (e) => {
+    if (menu.hidden || menu.contains(e.target)) return;
+    positionMenu();
+  }, true);
 }
 
 // Current project/kb's members as picker candidates — the "is this person
