@@ -281,6 +281,7 @@ async function onLoggedIn() {
   currentUserLabel.textContent = displayNameFor(sessionUser);
   currentUserAvatar.innerHTML = avatarHTML(sessionUser);
   loadNav();
+  refreshHomeState();
 }
 
 async function checkSession() {
@@ -460,7 +461,9 @@ let currentId = null;
 let currentVersion = null; // the body's blob version last seen from the server — sent back on save so a concurrent edit can be merged instead of overwritten, see saveCurrentItem
 let currentPermissions = null; // the open item's server-computed permissions (see _get_item) — used by the history panel's Restore button
 let currentView = "home"; // "home" | "list" | "kanban" | "notes-list" | "notes-grid" | "members"
-let homeBucket = "today"; // "today" | "this_week" | "others" — Home due-date filter
+let homeBucket = null; // "now" | "today" | "this_week" | "others" | "requests" — Home tab; null until the first Home render picks a default (Now if it has anything, else Today)
+let nowData = { items: [], soft_limit: 3, hard_limit: 20 }; // private focus list, see app/state_db.py
+let requestsData = { received: [], sent: [], attention: 0 }; // status-change requests, visible only to owner and requester
 let scopeConfig = null; // { statuses, members, role } for the current project scope — null for kb/home
 let currentNoteFolder = ""; // relative path under notes root; "" = root — see selectScope/selectHome
 let notesFoldersCache = []; // every folder in the current scope, flat — {path, owner, type, users, remote} (see loadNoteFolders)
@@ -1256,6 +1259,8 @@ async function renderHeaderPanel(meta, canEditHeader) {
   renderTagChips();
 
   for (const el of headerFields) el.disabled = !canEditHeader;
+  updateEditorNowButton();
+  updateStatusRequestControls(meta, canEditHeader);
 }
 
 let headerSaveInFlight = false;
@@ -2298,21 +2303,44 @@ async function addPersonalTask() {
   openCreateDialog({ type: "task" });
 }
 
+async function openTaskInProject(project, taskId) {
+  scope = { type: "project", slug: project };
+  contentFilter = "tasks";
+  const cfgRes = await fetch(`/api/projects/${project}/config`);
+  scopeConfig = cfgRes.ok ? await cfgRes.json() : null;
+  await loadItems();
+  openItem(taskId);
+}
+
 async function renderHome() {
   homeView.innerHTML = "<p>Loading…</p>";
-  const res = await fetch("/api/me/tasks");
-  if (!res.ok) {
-    homeView.innerHTML = "<p>Could not load your tasks.</p>";
+  await refreshHomeState();
+  if (homeBucket === null) homeBucket = nowData.items.length ? "now" : "today";
+  for (const b of homeFilter.querySelectorAll("button")) b.classList.toggle("active", b.dataset.bucket === homeBucket);
+
+  homeView.innerHTML = "";
+  if (homeBucket === "requests") {
+    renderRequestsTab();
     return;
   }
-  const groups = await res.json();
-  homeView.innerHTML = "";
 
   const addRow = document.createElement("div");
   addRow.id = "home-add-personal-task";
   addRow.innerHTML = `<button type="button" class="btn-tonal" id="add-personal-task-btn">+ Add personal task</button>`;
   homeView.appendChild(addRow);
   document.getElementById("add-personal-task-btn").addEventListener("click", addPersonalTask);
+
+  if (homeBucket === "now") {
+    renderNowTab();
+    return;
+  }
+
+  const res = await fetch("/api/me/tasks");
+  if (!res.ok) {
+    homeView.innerHTML = "<p>Could not load your tasks.</p>";
+    return;
+  }
+  const groups = await res.json();
 
   const filteredGroups = groups
     .map((g) => ({ project: g.project, name: g.name, tasks: g.tasks.filter((t) => dateBucket(t.due_date) === homeBucket) }))
@@ -2331,19 +2359,328 @@ async function renderHome() {
       const dueBit = task.due_date ? `<span class="item-meta">due ${task.due_date}</span>` : "";
       card.innerHTML = `<span class="item-title">${task.title || task.id}</span>${dueBit}` +
         badgesRowHTML(task) + peopleRowHTML(task);
-      card.addEventListener("click", async () => {
-        scope = { type: "project", slug: group.project };
-        contentFilter = "tasks";
-        const cfgRes = await fetch(`/api/projects/${group.project}/config`);
-        scopeConfig = cfgRes.ok ? await cfgRes.json() : null;
-        await loadItems();
-        openItem(task.id);
-      });
+      card.appendChild(makeNowButton(group.project, task.id));
+      card.addEventListener("click", () => openTaskInProject(group.project, task.id));
       section.appendChild(card);
     }
     homeView.appendChild(section);
   }
 }
+
+// --- Now: a private, per-person focus list (see app/state_db.py) ---
+
+const nowKey = (project, taskId) => `${project}/${taskId}`;
+const nowKeys = () => new Set(nowData.items.map((i) => nowKey(i.project, i.task.id)));
+
+async function refreshNow() {
+  const res = await fetch("/api/me/now");
+  if (res.ok) nowData = await res.json();
+}
+
+async function refreshRequests() {
+  const res = await fetch("/api/me/requests");
+  if (res.ok) requestsData = await res.json();
+}
+
+function setBadge(el, count) {
+  el.hidden = !count;
+  el.textContent = count || "";
+}
+
+function updateHomeBadges() {
+  setBadge(document.getElementById("badge-now"), nowData.items.length);
+  setBadge(document.getElementById("badge-requests"), requestsData.attention);
+}
+
+async function refreshHomeState() {
+  await Promise.all([refreshNow(), refreshRequests()]);
+  updateHomeBadges();
+}
+
+function makeNowButton(project, taskId) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  const active = nowKeys().has(nowKey(project, taskId));
+  btn.className = "btn-icon now-btn" + (active ? " active" : "");
+  const label = active ? "Take out of Now" : "Do this now";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">bolt</span>';
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleNow(project, taskId);
+  });
+  return btn;
+}
+
+async function toggleNow(project, taskId) {
+  const inNow = nowKeys().has(nowKey(project, taskId));
+  const res = inNow
+    ? await fetch(`/api/me/now/${encodeURIComponent(project)}/${encodeURIComponent(taskId)}`, { method: "DELETE" })
+    : await fetch("/api/me/now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, task_id: taskId }),
+      });
+  if (!res.ok) {
+    showToast((await res.json()).detail || "Could not update Now.", "error");
+    return;
+  }
+  nowData = await res.json();
+  updateHomeBadges();
+  if (inNow) showToast("Taken out of Now.");
+  else if (nowData.items.length > nowData.soft_limit) showToast(`Added to Now — that's ${nowData.items.length} things in focus.`);
+  else showToast("Added to Now.");
+  updateEditorNowButton();
+  renderCurrentView();
+}
+
+function sinceText(iso) {
+  const started = new Date(iso);
+  if (isNaN(started)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - started.getTime()) / 60000));
+  const time = started.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const sameDay = started.toDateString() === new Date().toDateString();
+  const elapsed = mins < 60 ? `${mins} min` : mins < 1440 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${Math.floor(mins / 1440)} d`;
+  return `since ${sameDay ? time : started.toLocaleDateString() + " " + time} · ${elapsed}`;
+}
+
+function statusChipHTML(status, color) {
+  const style = color ? ` style="background:${color};color:${readableTextOn(color)}"` : "";
+  return `<span class="badge badge-status"${style}>${escapeAttr(status || "")}</span>`;
+}
+
+async function moveNowItem(index, delta) {
+  const items = nowData.items.slice();
+  const target = index + delta;
+  if (target < 0 || target >= items.length) return;
+  [items[index], items[target]] = [items[target], items[index]];
+  const res = await fetch("/api/me/now/order", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items: items.map((i) => ({ project: i.project, task_id: i.task.id })) }),
+  });
+  if (res.ok) {
+    nowData = await res.json();
+    renderHome();
+  }
+}
+
+function renderNowTab() {
+  const { items, soft_limit } = nowData;
+  if (items.length > soft_limit) {
+    const banner = document.createElement("div");
+    banner.className = "now-banner";
+    banner.textContent = `${items.length} things in focus — try to keep it to ${soft_limit} or fewer.`;
+    homeView.appendChild(banner);
+  }
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "now-empty";
+    empty.textContent = "Nothing in focus. Use the bolt on any task to put it here — this list is only yours.";
+    homeView.appendChild(empty);
+    return;
+  }
+  items.forEach((entry, i) => {
+    const card = document.createElement("div");
+    card.className = "now-card" + (entry.archived ? " archived" : "");
+    card.innerHTML =
+      `<div class="now-card-head"><span class="now-card-title">${escapeAttr(entry.task.title || entry.task.id)}</span>` +
+      `<span class="now-card-project">${escapeAttr(entry.project_name)}</span>${statusChipHTML(entry.task.status, entry.status_color)}</div>`;
+    card.querySelector(".now-card-title").addEventListener("click", () => openTaskInProject(entry.project, entry.task.id));
+
+    const note = document.createElement("input");
+    note.type = "text";
+    note.className = "now-note";
+    note.maxLength = 200;
+    note.autocomplete = "off";
+    note.placeholder = "What are you doing right now?";
+    note.value = entry.note;
+    note.setAttribute("aria-label", "What you're doing right now");
+    note.addEventListener("change", async () => {
+      const res = await fetch(`/api/me/now/${encodeURIComponent(entry.project)}/${encodeURIComponent(entry.task.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: note.value }),
+      });
+      if (res.ok) entry.note = note.value.trim();
+      else showToast("Could not save that note.", "error");
+    });
+    card.appendChild(note);
+
+    const foot = document.createElement("div");
+    foot.className = "now-card-foot";
+    const since = document.createElement("span");
+    since.textContent = sinceText(entry.started_at);
+    const spacer = document.createElement("span");
+    spacer.className = "spacer";
+    foot.append(since, spacer);
+    const iconBtn = (icon, title, handler, disabled = false) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn-icon";
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.disabled = disabled;
+      b.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>`;
+      b.addEventListener("click", handler);
+      return b;
+    };
+    foot.append(
+      iconBtn("arrow_upward", "Move up", () => moveNowItem(i, -1), i === 0),
+      iconBtn("arrow_downward", "Move down", () => moveNowItem(i, 1), i === items.length - 1),
+      iconBtn("check", "Take out of Now", async () => {
+        await toggleNow(entry.project, entry.task.id);
+      })
+    );
+    card.appendChild(foot);
+    homeView.appendChild(card);
+  });
+}
+
+// --- status-change requests: only the owner ever writes a task's header, so
+// an assigned person asks and the owner accepts or rejects (state_db.py) ---
+
+async function requestAction(url, options, doneMessage) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    showToast((await res.json()).detail || "That didn't work.", "error");
+    await refreshRequests();
+  } else {
+    requestsData = await res.json();
+    if (doneMessage) showToast(doneMessage);
+  }
+  updateHomeBadges();
+  renderHome();
+}
+
+function requestCard(r, kind) {
+  const card = document.createElement("div");
+  card.className = "request-card" + (r.state === "rejected" ? " rejected" : "");
+  const who = kind === "received" ? `${escapeAttr(displayNameFor(r.requester))} asks` : `You asked ${escapeAttr(displayNameFor(r.owner || ""))}`;
+  card.innerHTML =
+    `<span class="request-title">${escapeAttr(r.task.title || r.task.id)} <span class="now-card-project">· ${escapeAttr(r.project_name)}</span></span>` +
+    `<div class="request-line">${who}: ${statusChipHTML(r.from_status, null)} <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span> ${statusChipHTML(r.to_status, r.to_status_color)}` +
+    (r.task.status !== r.from_status ? ` <span>(now ${statusChipHTML(r.task.status, r.status_color)})</span>` : "") + `</div>` +
+    (r.note ? `<div class="request-note">“${escapeAttr(r.note)}”</div>` : "") +
+    (r.state === "rejected" ? `<div class="request-note">Rejected${r.decision_note ? `: ${escapeAttr(r.decision_note)}` : "."}</div>` : "");
+  card.querySelector(".request-title").addEventListener("click", () => openTaskInProject(r.project, r.task.id));
+  const actions = document.createElement("div");
+  actions.className = "request-actions";
+  const btn = (label, cls, handler) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    if (cls) b.className = cls;
+    b.textContent = label;
+    b.addEventListener("click", handler);
+    actions.appendChild(b);
+  };
+  const base = `/api/me/requests/${r.id}`;
+  if (kind === "received") {
+    btn("Reject", "", () => {
+      const reason = prompt("Reason (optional):", "");
+      if (reason === null) return;
+      requestAction(`${base}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note: reason }) }, "Request rejected.");
+    });
+    btn("Accept", "btn-primary", () => requestAction(`${base}/accept`, { method: "POST" }, `Moved to ${r.to_status}.`));
+  } else if (r.state === "rejected") {
+    btn("Dismiss", "", () => requestAction(base, { method: "DELETE" }, ""));
+  } else {
+    btn("Cancel request", "", () => requestAction(base, { method: "DELETE" }, "Request cancelled."));
+  }
+  card.appendChild(actions);
+  return card;
+}
+
+function renderRequestsTab() {
+  const section = (title, list, kind, empty) => {
+    const wrap = document.createElement("div");
+    wrap.className = "request-section";
+    wrap.innerHTML = `<h2>${title} (${list.length})</h2>`;
+    if (!list.length) {
+      const p = document.createElement("p");
+      p.className = "now-empty";
+      p.textContent = empty;
+      wrap.appendChild(p);
+    }
+    for (const r of list) wrap.appendChild(requestCard(r, kind));
+    homeView.appendChild(wrap);
+  };
+  section("Received", requestsData.received, "received", "Nobody is asking you to change a status.");
+  section("Sent", requestsData.sent, "sent", "You haven't asked anyone to change a status.");
+}
+
+// the editor's own controls for both features
+const nowBtn = document.getElementById("now-btn");
+const statusRequestRow = document.getElementById("status-request-row");
+const statusRequestBtn = document.getElementById("status-request-btn");
+const statusRequestNote = document.getElementById("status-request-note");
+const statusRequestDialog = document.getElementById("status-request-dialog");
+const statusRequestSelect = document.getElementById("status-request-select");
+const statusRequestText = document.getElementById("status-request-text");
+
+function updateEditorNowButton() {
+  const isTask = !!(currentItemMeta && currentItemMeta.type === "task" && scope && scope.type === "project" && currentId);
+  nowBtn.hidden = !isTask;
+  if (!isTask) return;
+  const active = nowKeys().has(nowKey(scope.slug, currentId));
+  nowBtn.classList.toggle("active", active);
+  const label = active ? "Take out of Now" : "Do this now";
+  nowBtn.title = label;
+  nowBtn.setAttribute("aria-label", label);
+}
+
+nowBtn.addEventListener("click", () => {
+  if (currentId && scope && scope.type === "project") toggleNow(scope.slug, currentId);
+});
+
+async function updateStatusRequestControls(meta, canEditHeader) {
+  const canAsk = meta.type === "task" && !canEditHeader && scope && scope.type === "project" && (meta.assigned_to || []).includes(currentUser());
+  statusRequestRow.hidden = !canAsk;
+  statusRequestNote.hidden = true;
+  if (!canAsk) return;
+  await refreshRequests();
+  const pending = requestsData.sent.find((r) => r.project === scope.slug && r.task.id === meta.id);
+  statusRequestNote.hidden = !pending;
+  if (pending) {
+    statusRequestNote.textContent = pending.state === "rejected" ? `Rejected: → ${pending.to_status}` : `Requested: → ${pending.to_status}`;
+  }
+  statusRequestBtn.lastChild.textContent = pending && pending.state === "pending" ? " Change request…" : " Ask owner to change…";
+}
+
+statusRequestBtn.addEventListener("click", () => {
+  const current = currentItemMeta.status;
+  statusRequestSelect.innerHTML = (scopeConfig.statuses || [])
+    .filter((st) => st !== current)
+    .map((st) => `<option value="${st}">${st}</option>`)
+    .join("");
+  document.getElementById("status-request-intro").textContent = `${displayNameFor(currentItemMeta.owner)} owns this task and decides its status. Now: ${current}.`;
+  statusRequestText.value = "";
+  statusRequestDialog.showModal();
+});
+document.getElementById("status-request-cancel").addEventListener("click", () => statusRequestDialog.close());
+closeOnBackdropClick(statusRequestDialog);
+document.getElementById("status-request-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const res = await fetch(`/api/projects/${scope.slug}/items/${currentId}/status-requests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to_status: statusRequestSelect.value, note: statusRequestText.value }),
+  });
+  if (res.ok) {
+    requestsData = await res.json();
+    statusRequestDialog.close();
+    showToast(`Request sent to ${displayNameFor(currentItemMeta.owner)}.`);
+    updateStatusRequestControls(currentItemMeta, false);
+  } else {
+    showToast((await res.json()).detail || "Could not send the request.", "error");
+  }
+});
+
+// counters stay fresh without a live channel: refetch when the tab regains focus
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentView === "home" && sessionUser) renderHome();
+});
 
 // F01: A fresh login (or an empty due-date bucket) used to show a bare
 // "Nothing here." even with projects and note bases populated in the
@@ -2523,7 +2860,10 @@ function makeItemCard(item, canEdit) {
   card.innerHTML = `<span class="item-title">${item.title || item.id}</span>${dueBit}` +
     badgesRowHTML(item) + peopleRowHTML(item);
   card.addEventListener("click", () => openItem(item.id));
-  if (item.type === "task" && canEdit) {
+  if (item.type === "task" && scope && scope.type === "project") card.appendChild(makeNowButton(scope.slug, item.id));
+  // only a task's owner can move it between statuses (the server refuses
+  // anyone else), so only the owner's cards are draggable
+  if (item.type === "task" && canEdit && item.owner === currentUser()) {
     card.draggable = true;
     card.addEventListener("dragstart", (e) => {
       card.classList.add("dragging");
@@ -3097,12 +3437,14 @@ async function renderKanban() {
     for (const task of inColumn) {
       const card = document.createElement("div");
       card.className = "kanban-card";
-      card.draggable = canEdit;
+      const canMove = canEdit && task.owner === currentUser(); // see makeItemCard
+      card.draggable = canMove;
       card.dataset.id = task.id;
       const dueBit = task.due_date ? `<span class="card-meta">due ${task.due_date}</span>` : "";
       card.innerHTML = `${task.title || task.id}${dueBit}` + badgesRowHTML(task) + peopleRowHTML(task);
       card.addEventListener("click", () => openItem(task.id));
-      if (canEdit) {
+      if (task.type === "task" && scope && scope.type === "project") card.appendChild(makeNowButton(scope.slug, task.id));
+      if (canMove) {
         card.addEventListener("dragstart", (e) => {
           card.classList.add("dragging");
           e.dataTransfer.setData("text/plain", task.id);

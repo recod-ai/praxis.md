@@ -650,6 +650,35 @@ by scanning the files each time (same as everything else — see Index),
 no separate registry to keep in sync; SQLite remains an option later if
 that scan ever becomes slow enough to matter.
 
+## Now list and status requests (SQLite, *not* a cache — `app/state_db.py`)
+
+The one deliberate exception to "nothing may exist only in the database":
+per-person **interface state**, never task state. Kept in its own file
+(`PRAXIS_STATE_DB`, default `state.db` next to the workspace directory; a
+dedicated mount in the agorae deployment), outside the workspace git
+repository and outside the archeion mirrors, so it stays private.
+
+- `now_items(username, project, task_id, note, position, started_at)` — the
+  private "Now" focus list on Home. A pointer plus a free-text note; putting a
+  task there changes nothing about the task. Any task the person can see may
+  be added. UI warns above 3 items, the server refuses above 20.
+- `status_requests(id, project, task_id, requester, from_status, to_status,
+  note, state, decision_note, created_at)` — a person assigned to a task (not
+  its owner) asks the owner to change its status. Only the owner can accept
+  (which applies the status through the normal header path, so the header is
+  still only ever written by its owner) or reject; only the requester can
+  cancel or dismiss. Visible to those two people and nobody else, admins
+  included; the owner is read off the task each time, so a transferred task
+  takes its requests with it. One live request per requester and task.
+
+Rows that stop making sense are deleted when read: the task is gone, the
+target status was removed or already reached, the requester is no longer
+assigned. Editing a project's statuses renames or drops pending requests to
+match. Encrypted projects are excluded entirely (`drop_project` on encrypt),
+since nothing about their tasks may live outside the vault.
+
+Losing this file loses Now lists and pending requests — never a task.
+
 ## Index (SQLite, a cache — `app/index.py`)
 
 The `.md` files are the only source of truth; SQLite (`workspace/.praxis-index.db`,

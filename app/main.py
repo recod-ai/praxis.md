@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import archeion_mirror, config, events, git_store, index, storage, submodules, vault
+from . import archeion_mirror, config, events, git_store, index, state_db, storage, submodules, vault
 from .permissions import check_body_save, check_folder_write, check_header_save
 
 
@@ -1332,6 +1332,264 @@ def my_personal_project(user: str = Depends(get_current_user)):
     return {"slug": slug, "name": config.get_project_name(slug)}
 
 
+
+# --- Now (private focus list) and status-change requests -------------------
+# Both live in state_db (a real database, not a cache — see its docstring):
+# they're interface state about tasks, never task state. The task header,
+# status included, is still only ever written by its owner.
+
+
+class NowAddRequest(BaseModel):
+    project: str
+    task_id: str
+
+
+class NowNoteRequest(BaseModel):
+    note: str = ""
+
+
+class NowOrderEntry(BaseModel):
+    project: str
+    task_id: str
+
+
+class NowOrderRequest(BaseModel):
+    items: list[NowOrderEntry]
+
+
+class StatusChangeRequest(BaseModel):
+    to_status: str
+    note: str = ""
+
+
+class RequestDecision(BaseModel):
+    note: str = ""
+
+
+def _project_visible(slug: str, user: str) -> bool:
+    """A project this person may see and that state_db is allowed to name —
+    encrypted ones never are (see state_db.drop_project)."""
+    if slug not in config.list_projects() or vault.has_vault(slug):
+        return False
+    members = config.get_members(slug)
+    return not members or user in members
+
+
+def _task_or_none(slug: str, task_id: str) -> dict | None:
+    item = index.get_item(config.project_dir(slug), task_id)
+    return item if item and item.get("type") == "task" else None
+
+
+def _status_color_or_none(slug: str, status: str | None) -> str | None:
+    return config.status_color(slug, status) if status in config.get_statuses(slug) else None
+
+
+def _now_view(row: dict, user: str) -> dict | None:
+    slug = row["project"]
+    if slug not in config.list_projects():
+        state_db.now_remove(user, slug, row["task_id"])
+        return None
+    if not _project_visible(slug, user):
+        return None  # hidden, not deleted: it comes back if access does
+    task = _task_or_none(slug, row["task_id"])
+    if task is None:
+        state_db.now_remove(user, slug, row["task_id"])
+        return None
+    return {
+        "project": slug,
+        "project_name": config.get_project_name(slug),
+        "task": task,
+        "status_color": _status_color_or_none(slug, task.get("status")),
+        "archived": task.get("status") in config.get_archived_statuses(slug),
+        "note": row["note"],
+        "started_at": row["started_at"],
+    }
+
+
+@app.get("/api/me/now")
+def now_get(user: str = Depends(get_current_user)):
+    items = [v for v in (_now_view(r, user) for r in state_db.now_list(user)) if v]
+    return {"items": items, "soft_limit": state_db.NOW_SOFT_LIMIT, "hard_limit": state_db.NOW_HARD_LIMIT}
+
+
+@app.post("/api/me/now")
+def now_add(req: NowAddRequest, user: str = Depends(get_current_user)):
+    if vault.has_vault(req.project):
+        raise HTTPException(400, "Encrypted projects can't be used in Now.")
+    if not _project_visible(req.project, user):
+        raise HTTPException(404, "Project not found")
+    if _task_or_none(req.project, req.task_id) is None:
+        raise HTTPException(404, "Task not found")
+    try:
+        state_db.now_add(user, req.project, req.task_id)
+    except ValueError as err:
+        raise HTTPException(409, str(err))
+    return now_get(user)
+
+
+@app.patch("/api/me/now/{project}/{task_id}")
+def now_note(project: str, task_id: str, req: NowNoteRequest, user: str = Depends(get_current_user)):
+    if not state_db.now_set_note(user, project, task_id, req.note):
+        raise HTTPException(404, "Not in your Now list")
+    return {"ok": True}
+
+
+@app.put("/api/me/now/order")
+def now_order(req: NowOrderRequest, user: str = Depends(get_current_user)):
+    state_db.now_reorder(user, [(e.project, e.task_id) for e in req.items])
+    return now_get(user)
+
+
+@app.delete("/api/me/now/{project}/{task_id}")
+def now_remove(project: str, task_id: str, user: str = Depends(get_current_user)):
+    state_db.now_remove(user, project, task_id)
+    return now_get(user)
+
+
+def _request_view(row: dict, user: str) -> tuple[dict | None, bool]:
+    """(view, stale). `stale` means the row no longer makes sense and should
+    be deleted — the task is gone, the status it asks for is gone or already
+    reached, or the requester stopped being assigned. A view of None without
+    `stale` is just hidden from this person."""
+    slug = row["project"]
+    if slug not in config.list_projects():
+        return None, True
+    if vault.has_vault(slug):
+        return None, False
+    task = _task_or_none(slug, row["task_id"])
+    if task is None or row["to_status"] not in config.get_statuses(slug):
+        return None, True
+    if row["state"] == "pending":
+        if task.get("status") == row["to_status"]:
+            return None, True
+        if row["requester"] not in (task.get("assigned_to") or []) or row["requester"] == task.get("owner"):
+            return None, True
+    if not _project_visible(slug, user):
+        return None, False
+    return {
+        "id": row["id"],
+        "project": slug,
+        "project_name": config.get_project_name(slug),
+        "task": task,
+        "requester": row["requester"],
+        "owner": task.get("owner"),
+        "from_status": row["from_status"],
+        "to_status": row["to_status"],
+        "to_status_color": _status_color_or_none(slug, row["to_status"]),
+        "status_color": _status_color_or_none(slug, task.get("status")),
+        "note": row["note"],
+        "state": row["state"],
+        "decision_note": row["decision_note"],
+        "created_at": row["created_at"],
+    }, False
+
+
+def _requests_for(user: str) -> dict:
+    """Received = pending requests on tasks this person currently owns (the
+    owner is read off the task each time, so a transferred task takes its
+    requests with it). Sent = this person's own requests, pending or
+    rejected. Nobody else ever sees a request — not even a project admin."""
+    received, sent = [], []
+    seen = set()
+    for row in state_db.requests_pending() + state_db.requests_by_requester(user):
+        if row["id"] in seen:
+            continue
+        seen.add(row["id"])
+        view, stale = _request_view(row, user)
+        if stale:
+            state_db.request_delete(row["id"])
+            continue
+        if view is None:
+            continue
+        if row["requester"] == user:
+            sent.append(view)
+        elif row["state"] == "pending" and view["owner"] == user:
+            received.append(view)
+    attention = len(received) + sum(1 for v in sent if v["state"] == "rejected")
+    return {"received": received, "sent": sent, "attention": attention}
+
+
+@app.get("/api/me/requests")
+def requests_get(user: str = Depends(get_current_user)):
+    return _requests_for(user)
+
+
+@app.post("/api/projects/{slug}/items/{item_id}/status-requests")
+def request_status_change(slug: str, item_id: str, req: StatusChangeRequest, user: str = Depends(require_project_access)):
+    if vault.has_vault(slug):
+        raise HTTPException(400, "Status requests aren't available in encrypted projects.")
+    task = _task_or_none(slug, item_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    if user == task.get("owner"):
+        raise HTTPException(400, "You own this task — change its status directly.")
+    if user not in (task.get("assigned_to") or []):
+        raise HTTPException(403, "Only people assigned to this task can ask for a status change.")
+    if req.to_status not in config.get_statuses(slug):
+        raise HTTPException(400, f"Unknown status: {req.to_status!r}")
+    if req.to_status == task.get("status"):
+        raise HTTPException(400, "The task is already in that status.")
+    state_db.request_create(slug, item_id, user, task.get("status") or "", req.to_status, req.note)
+    return _requests_for(user)
+
+
+def _own_request_or_404(request_id: int, user: str, *, as_owner: bool) -> tuple[dict, dict]:
+    row = state_db.request_get(request_id)
+    if row is None:
+        raise HTTPException(404, "Request not found")
+    if as_owner:
+        task = _task_or_none(row["project"], row["task_id"])
+        if task is None or task.get("owner") != user or not _project_visible(row["project"], user):
+            raise HTTPException(404, "Request not found")  # not yours to see — same answer as a missing one
+        return row, task
+    if row["requester"] != user:
+        raise HTTPException(404, "Request not found")
+    return row, {}
+
+
+@app.post("/api/me/requests/{request_id}/accept")
+def request_accept(request_id: int, user: str = Depends(get_current_user)):
+    row, task = _own_request_or_404(request_id, user, as_owner=True)
+    if row["state"] != "pending":
+        raise HTTPException(409, "This request was already answered.")
+    if row["to_status"] not in config.get_statuses(row["project"]):
+        state_db.request_delete(request_id)
+        raise HTTPException(409, "That status no longer exists.")
+    slug = row["project"]
+    _save_header(
+        config.project_dir(slug),
+        row["task_id"],
+        HeaderUpdateRequest(
+            tags=task.get("tags") or [],
+            parent=task.get("parent"),
+            status=row["to_status"],
+            due_date=str(task["due_date"]) if task.get("due_date") else None,
+            assigned_to=task.get("assigned_to") or [],
+        ),
+        acting_user=user,
+    )
+    _mirror_project_to_archeion(slug, user, f"Update {row['task_id']} header")
+    state_db.request_delete(request_id)
+    return _requests_for(user)
+
+
+@app.post("/api/me/requests/{request_id}/reject")
+def request_reject(request_id: int, req: RequestDecision, user: str = Depends(get_current_user)):
+    row, _task = _own_request_or_404(request_id, user, as_owner=True)
+    if row["state"] != "pending":
+        raise HTTPException(409, "This request was already answered.")
+    state_db.request_reject(request_id, req.note)
+    return _requests_for(user)
+
+
+@app.delete("/api/me/requests/{request_id}")
+def request_cancel(request_id: int, user: str = Depends(get_current_user)):
+    """Cancel your own pending request, or dismiss one that was rejected."""
+    _own_request_or_404(request_id, user, as_owner=False)
+    state_db.request_delete(request_id)
+    return _requests_for(user)
+
+
 @app.post("/api/projects")
 def create_project(req: NewScopeRequest, user: str = Depends(get_current_user)):
     if not req.name.strip():
@@ -1458,6 +1716,7 @@ def _apply_statuses(slug: str, entries: list[StatusEntry], acting_user: str, rem
             if new != status:
                 moves.append((task, new))
         config.set_statuses(slug, [e.model_dump() for e in entries])
+        state_db.requests_remap_statuses(slug, mapping)
         for task, new in moves:
             path = index.find_path_by_id(content_dir, task["id"])
             if path is None:
@@ -1563,6 +1822,7 @@ def project_encrypt(slug: str, user: str = Depends(require_project_admin)):
         )
         git_store.forget_repo(scope_dir)  # its tasks/knowledge no longer live here — see vault.encrypt_project
         index.rebuild_scope(scope_dir)  # now empty until someone unlocks it again
+        state_db.drop_project(slug)  # Now entries / requests name its tasks — nothing about them may outlive the seal
         git_store.commit_all(config.WORKSPACE_DIR, f"Encrypt project {slug}", user)
     return {"secret": secret}
 

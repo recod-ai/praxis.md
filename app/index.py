@@ -109,6 +109,13 @@ def list_items(scope_dir: Path) -> list[dict]:
     return [json.loads(row[0]) for row in rows]
 
 
+def get_item(scope_dir: Path, item_id: str) -> dict | None:
+    row = _connection().execute(
+        "SELECT data_json FROM items WHERE scope_dir = ? AND id = ?", (str(scope_dir), item_id)
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
 def find_path_by_id(scope_dir: Path, item_id: str) -> Path | None:
     row = _connection().execute(
         "SELECT path FROM items WHERE scope_dir = ? AND id = ?", (str(scope_dir), item_id)

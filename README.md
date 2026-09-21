@@ -167,6 +167,11 @@ and why it needs its own org rather than sharing the mirror's.
 Uploads (PDF/image attachments, any folder) are capped by
 `PRAXIS_MAX_UPLOAD_MB` (default 25).
 
+Each person's private Now list and the status-change requests live in a small
+SQLite file, `PRAXIS_STATE_DB` (default `state.db` next to the workspace
+directory). Unlike `.praxis-index.db` it is not a cache, so give it a persistent
+location in any real deployment. Tests: `uv run --with pytest pytest`.
+
 ## Workspace layout
 
 ```
