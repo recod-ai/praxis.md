@@ -614,7 +614,7 @@ def _convert_folder_to_submodule(scope_dir: Path, raw_path: str, acting_user: st
         relpath = str(folder_dir.relative_to(git_root))
         git_root_repo = git_store.repo(git_root)
         git_root_repo.git.rm("-r", relpath)
-        git_store.add_submodule(git_root, relpath, admin_url)
+        git_store.add_submodule(git_root, relpath, admin_url, clean_url=submodules.public_clone_url(repo_name))
 
         config.register_submodule(root, safe_path, acting_user, submodules.public_clone_url(repo_name))
         submodules.sync_collaborators(repo_name, _member_roles_for_scope(scope_dir), lambda u: config.get_user_profile(u).get("email"))

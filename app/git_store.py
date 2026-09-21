@@ -153,7 +153,7 @@ def file_history(root: Path, relpath: str) -> list[dict]:
     return history
 
 
-def add_submodule(root: Path, relpath: str, url: str) -> None:
+def add_submodule(root: Path, relpath: str, url: str, clean_url: str | None = None) -> None:
     """Registers an existing repo as a real git submodule at relpath, right
     after the caller has git-rm'd whatever plain files used to live there
     (see main.py's _convert_folder_to_submodule) — plumbing
@@ -161,8 +161,19 @@ def add_submodule(root: Path, relpath: str, url: str) -> None:
     model, which behaves inconsistently across versions (same preference
     for plain plumbing as this module's own merge_body). Leaves relpath
     checked out with the submodule's current content and stages
-    .gitmodules + the new gitlink — caller still has to commit."""
-    repo(root).git.submodule("add", "--force", url, relpath)
+    .gitmodules + the new gitlink — caller still has to commit.
+
+    `url` may carry credentials (the one-off admin clone URL); `clean_url`
+    is what must remain recorded. `git submodule add` writes `url` into
+    .gitmodules, which is committed, and into .git/config and the
+    submodule's own remote — so it's rewritten straight away, before anything
+    is committed, and no password ever reaches the workspace's history."""
+    r = repo(root)
+    r.git.submodule("add", "--force", url, relpath)
+    if clean_url:
+        r.git.config("-f", ".gitmodules", f"submodule.{relpath}.url", clean_url)
+        r.git.submodule("sync", "--", relpath)
+        r.git.add(".gitmodules")
 
 
 def remove_submodule(root: Path, relpath: str) -> None:
