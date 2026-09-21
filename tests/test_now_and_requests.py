@@ -49,8 +49,6 @@ def test_now_any_visible_task_and_privacy(world):
     r = world["bob"].post("/api/me/now", json={"project": p, "task_id": task})  # not assigned to bob — allowed
     assert r.status_code == 200 and len(r.json()["items"]) == 1
     assert world["ana"].get("/api/me/now").json()["items"] == []  # private
-    world["bob"].patch(f"/api/me/now/{p}/{task}", json={"note": "  reading the paper  "})
-    assert world["bob"].get("/api/me/now").json()["items"][0]["note"] == "reading the paper"
     world["bob"].delete(f"/api/me/now/{p}/{task}")
     assert world["bob"].get("/api/me/now").json()["items"] == []
 

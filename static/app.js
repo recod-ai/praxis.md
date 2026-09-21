@@ -2489,25 +2489,6 @@ function renderNowTab() {
       `<span class="now-card-project">${escapeAttr(entry.project_name)}</span>${statusChipHTML(entry.task.status, entry.status_color)}</div>`;
     card.querySelector(".now-card-title").addEventListener("click", () => openTaskInProject(entry.project, entry.task.id));
 
-    const note = document.createElement("input");
-    note.type = "text";
-    note.className = "now-note";
-    note.maxLength = 200;
-    note.autocomplete = "off";
-    note.placeholder = "What are you doing right now?";
-    note.value = entry.note;
-    note.setAttribute("aria-label", "What you're doing right now");
-    note.addEventListener("change", async () => {
-      const res = await fetch(`/api/me/now/${encodeURIComponent(entry.project)}/${encodeURIComponent(entry.task.id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: note.value }),
-      });
-      if (res.ok) entry.note = note.value.trim();
-      else showToast("Could not save that note.", "error");
-    });
-    card.appendChild(note);
-
     const foot = document.createElement("div");
     foot.className = "now-card-foot";
     const since = document.createElement("span");

@@ -1344,10 +1344,6 @@ class NowAddRequest(BaseModel):
     task_id: str
 
 
-class NowNoteRequest(BaseModel):
-    note: str = ""
-
-
 class NowOrderEntry(BaseModel):
     project: str
     task_id: str
@@ -1401,7 +1397,6 @@ def _now_view(row: dict, user: str) -> dict | None:
         "task": task,
         "status_color": _status_color_or_none(slug, task.get("status")),
         "archived": task.get("status") in config.get_archived_statuses(slug),
-        "note": row["note"],
         "started_at": row["started_at"],
     }
 
@@ -1425,13 +1420,6 @@ def now_add(req: NowAddRequest, user: str = Depends(get_current_user)):
     except ValueError as err:
         raise HTTPException(409, str(err))
     return now_get(user)
-
-
-@app.patch("/api/me/now/{project}/{task_id}")
-def now_note(project: str, task_id: str, req: NowNoteRequest, user: str = Depends(get_current_user)):
-    if not state_db.now_set_note(user, project, task_id, req.note):
-        raise HTTPException(404, "Not in your Now list")
-    return {"ok": True}
 
 
 @app.put("/api/me/now/order")

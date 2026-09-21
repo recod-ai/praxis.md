@@ -658,8 +658,8 @@ per-person **interface state**, never task state. Kept in its own file
 dedicated mount in the agorae deployment), outside the workspace git
 repository and outside the archeion mirrors, so it stays private.
 
-- `now_items(username, project, task_id, note, position, started_at)` — the
-  private "Now" focus list on Home. A pointer plus a free-text note; putting a
+- `now_items(username, project, task_id, position, started_at)` — the
+  private "Now" focus list on Home. Just a pointer; putting a
   task there changes nothing about the task. Any task the person can see may
   be added. UI warns above 3 items, the server refuses above 20.
 - `status_requests(id, project, task_id, requester, from_status, to_status,

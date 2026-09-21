@@ -4,8 +4,7 @@ status-change requests.
 Unlike index.py — a cache rebuilt from the markdown files on every startup —
 this database is the only copy of what it holds. That is a deliberate
 exception to "nothing may exist only in the database" (docs/design/
-schema.md): none of this is task state. A Now entry is a pointer with a
-private note, and a request is a message *about* a task; the task's own
+schema.md): none of this is task state. A Now entry is just a pointer, and a request is a message *about* a task; the task's own
 header (status included) is only ever written by its owner, through the
 normal header path. Losing this file loses the Now lists and pending
 requests, never a task.
@@ -37,7 +36,6 @@ _SCHEMA = [
         username   TEXT NOT NULL,
         project    TEXT NOT NULL,
         task_id    TEXT NOT NULL,
-        note       TEXT NOT NULL DEFAULT '',
         position   INTEGER NOT NULL,
         started_at TEXT NOT NULL,
         PRIMARY KEY (username, project, task_id)
@@ -75,7 +73,11 @@ def _connection() -> sqlite3.Connection:
         if version < 1:
             for statement in _SCHEMA:
                 conn.execute(statement)
-            conn.execute("PRAGMA user_version = 1")
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
+        elif version < 2:
+            conn.execute("ALTER TABLE now_items DROP COLUMN note")
+            conn.execute("PRAGMA user_version = 2")
             conn.commit()
         _conn = conn
     return _conn
@@ -103,7 +105,7 @@ def now_list(username: str) -> list[dict]:
 
 def now_add(username: str, project: str, task_id: str) -> dict:
     """Idempotent: adding what's already there just returns the existing
-    row (same start time, same note)."""
+    row (same start time)."""
     with _lock:
         existing = _rows(
             "SELECT * FROM now_items WHERE username = ? AND project = ? AND task_id = ?",
@@ -116,21 +118,13 @@ def now_add(username: str, project: str, task_id: str) -> dict:
             raise ValueError(f"Now can hold at most {NOW_HARD_LIMIT} tasks — take something out first.")
         position = _rows("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM now_items WHERE username = ?", (username,))[0]["p"]
         _run(
-            "INSERT INTO now_items (username, project, task_id, note, position, started_at) VALUES (?, ?, ?, '', ?, ?)",
+            "INSERT INTO now_items (username, project, task_id, position, started_at) VALUES (?, ?, ?, ?, ?)",
             (username, project, task_id, position, _now_iso()),
         )
         return _rows(
             "SELECT * FROM now_items WHERE username = ? AND project = ? AND task_id = ?",
             (username, project, task_id),
         )[0]
-
-
-def now_set_note(username: str, project: str, task_id: str, note: str) -> bool:
-    cur = _run(
-        "UPDATE now_items SET note = ? WHERE username = ? AND project = ? AND task_id = ?",
-        (note.strip()[:NOTE_MAX], username, project, task_id),
-    )
-    return cur.rowcount > 0
 
 
 def now_remove(username: str, project: str, task_id: str) -> None:
