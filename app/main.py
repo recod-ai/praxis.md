@@ -133,6 +133,10 @@ class ProjectConfigRequest(BaseModel):
     icon: str
 
 
+class ArchiveRequest(BaseModel):
+    archived: bool
+
+
 class NewScopeRequest(BaseModel):
     """Creating a project or note base — just a name (icon optional, falls
     back to the type's default). Slug is derived from the name server-side,
@@ -1322,6 +1326,8 @@ def my_tasks(user: str = Depends(get_current_user)):
     it's created lazily on first use, not eagerly on every Home load."""
     result = []
     for slug in config.list_projects():
+        if config.is_project_archived(slug):
+            continue
         members = config.get_members(slug)
         if members and user not in members:
             continue
@@ -1624,6 +1630,7 @@ def list_projects(user: str = Depends(get_current_user)):
             "name": config.get_project_name(slug),
             "icon": config.get_project_icon(slug),
             "members": members,
+            "archived": config.is_project_archived(slug),
         })
     return result
 
@@ -1652,6 +1659,7 @@ def list_knowledge_bases(user: str = Depends(get_current_user)):
             "name": config.get_kb_name(slug),
             "icon": config.get_kb_icon(slug),
             "members": members,
+            "archived": config.is_kb_archived(slug),
         })
     return result
 
@@ -1673,6 +1681,7 @@ def project_config(slug: str, user: str = Depends(require_project_access)):
         "archived_statuses": config.get_archived_statuses(slug),
         "members": config.get_member_roles(slug),
         "role": config.get_role(slug, user),
+        "archived": config.is_project_archived(slug),
     }
 
 
@@ -1769,6 +1778,17 @@ def project_update_config(slug: str, req: ProjectConfigRequest, user: str = Depe
         result = {"name": config.set_project_name(slug, req.name.strip()), "icon": config.set_project_icon(slug, req.icon)}
         git_store.commit_all(config.WORKSPACE_DIR, f"Update {slug} settings", user)
     return result
+
+
+@app.post("/api/projects/{slug}/archive")
+def project_set_archived(slug: str, req: ArchiveRequest, user: str = Depends(require_project_admin)):
+    if config.is_personal_project(slug):
+        raise HTTPException(400, "This is a personal project — it can't be archived.")
+    with git_store.LOCK:
+        config.set_project_archived(slug, req.archived)
+        verb = "Archive" if req.archived else "Unarchive"
+        git_store.commit_all(config.WORKSPACE_DIR, f"{verb} {slug}", user)
+    return project_config(slug, user)
 
 
 @app.post("/api/projects/{slug}/members")
@@ -2020,6 +2040,7 @@ def kb_config(slug: str, user: str = Depends(require_kb_access)):
         "icon": config.get_kb_icon(slug),
         "members": config.get_kb_member_roles(slug),
         "role": config.get_kb_role(slug, user),
+        "archived": config.is_kb_archived(slug),
     }
 
 
@@ -2031,6 +2052,15 @@ def kb_update_config(slug: str, req: KbConfigRequest, user: str = Depends(requir
         result = {"name": config.set_kb_name(slug, req.name.strip()), "icon": config.set_kb_icon(slug, req.icon)}
         git_store.commit_all(config.WORKSPACE_DIR, f"Update {slug} settings", user)
     return result
+
+
+@app.post("/api/knowledge-bases/{slug}/archive")
+def kb_set_archived(slug: str, req: ArchiveRequest, user: str = Depends(require_kb_admin)):
+    with git_store.LOCK:
+        config.set_kb_archived(slug, req.archived)
+        verb = "Archive" if req.archived else "Unarchive"
+        git_store.commit_all(config.WORKSPACE_DIR, f"{verb} {slug}", user)
+    return kb_config(slug, user)
 
 
 @app.post("/api/knowledge-bases/{slug}/members")

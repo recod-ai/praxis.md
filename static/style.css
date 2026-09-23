@@ -462,6 +462,9 @@ select {
 .nav-subitem { padding-left: 22px; font-weight: 400; font-size: 13px; }
 .nav-empty { padding: 4px 10px; font-size: 12px; color: var(--on-surface-variant); font-style: italic; }
 
+.nav-archived-item { opacity: 0.65; }
+.nav-archived-item:hover, .nav-archived-item.active { opacity: 1; }
+
 .nav-group { display: flex; flex-direction: column; }
 .nav-group-header { display: flex; align-items: center; gap: 2px; }
 .nav-project-toggle { font-size: 13px; }

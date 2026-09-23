@@ -438,6 +438,11 @@ const lockProjectBtn = document.getElementById("lock-project-btn");
 const vaultSecretDialog = document.getElementById("vault-secret-dialog");
 const vaultSecretProjectName = document.getElementById("vault-secret-project-name");
 const vaultSecretValue = document.getElementById("vault-secret-value");
+const scopeArchiveFields = document.getElementById("scope-archive-fields");
+const archiveStatusText = document.getElementById("archive-status-text");
+const archiveToggleBtn = document.getElementById("archive-toggle-btn");
+const navArchivedSection = document.getElementById("nav-archived-section");
+const navArchived = document.getElementById("nav-archived");
 
 // A curated set, not a free-text icon name — keeps every project/note base
 // icon in the same Material Symbols family as the rest of the app instead
@@ -1575,6 +1580,49 @@ function renderKbsNav(kbs) {
   }
 }
 
+// One flat list mixing archived projects and note bases together (unlike
+// the expandable per-scope groups above) — this section is meant to stay
+// out of the way, not offer the same Tasks/Notes sub-navigation. The main
+// row opens straight into the scope's primary view; the gear still opens
+// Settings, where the same toggle that archived it can unarchive it.
+function renderArchivedNav(projects, kbs) {
+  const entries = [
+    ...projects.map((p) => ({ ...p, kind: "project" })),
+    ...kbs.map((k) => ({ ...k, kind: "kb" })),
+  ].sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug));
+
+  navArchivedSection.hidden = entries.length === 0;
+  navArchived.innerHTML = "";
+  for (const e of entries) {
+    const row = document.createElement("div");
+    row.className = "nav-group-header";
+
+    const btn = document.createElement("button");
+    btn.className = "nav-item nav-project-toggle nav-archived-item";
+    const icon = e.icon || (e.kind === "kb" ? "menu_book" : "folder");
+    btn.innerHTML = `<span class="material-symbols-outlined icon-inline" aria-hidden="true">${icon}</span>` +
+      `<span class="nav-item-label">${e.name || e.slug}</span>`;
+    btn.dataset.type = e.kind === "kb" ? "kb-knowledge" : "project-tasks";
+    btn.dataset.slug = e.slug;
+    btn.addEventListener("click", () => selectScope(e.kind, e.slug, e.kind === "kb" ? "knowledge" : "tasks"));
+
+    const settingsBtn = document.createElement("button");
+    settingsBtn.className = "nav-gear-btn";
+    settingsBtn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">settings</span>';
+    settingsBtn.title = e.kind === "kb" ? "Note base settings" : "Project settings";
+    settingsBtn.setAttribute("aria-label", `${e.name || e.slug} settings`);
+    settingsBtn.dataset.type = e.kind === "kb" ? "kb-settings" : "project-settings";
+    settingsBtn.dataset.slug = e.slug;
+    settingsBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      selectScope(e.kind, e.slug, "settings");
+    });
+
+    row.append(btn, settingsBtn);
+    navArchived.appendChild(row);
+  }
+}
+
 // Refreshes just the nav tree's contents (e.g. after renaming a note base,
 // so the new name shows up there) — unlike loadNav(), this never
 // navigates anywhere, so it's safe to call while the user is looking at
@@ -1584,6 +1632,8 @@ async function refreshNavLists() {
   if (!user) {
     navProjects.innerHTML = "";
     navKbs.innerHTML = "";
+    navArchived.innerHTML = "";
+    navArchivedSection.hidden = true;
     return;
   }
   const [projectsRes, kbsRes] = await Promise.all([
@@ -1592,8 +1642,9 @@ async function refreshNavLists() {
   ]);
   const projects = projectsRes.ok ? await projectsRes.json() : [];
   const kbs = kbsRes.ok ? await kbsRes.json() : [];
-  renderProjectsNav(projects);
-  renderKbsNav(kbs);
+  renderProjectsNav(projects.filter((p) => !p.archived));
+  renderKbsNav(kbs.filter((k) => !k.archived));
+  renderArchivedNav(projects.filter((p) => p.archived), kbs.filter((k) => k.archived));
   updateNavActive();
 }
 
@@ -1712,6 +1763,9 @@ function scopeConfigUrl() {
 }
 function scopeMembersUrl() {
   return scope.type === "project" ? `/api/projects/${scope.slug}/members` : `/api/knowledge-bases/${scope.slug}/members`;
+}
+function scopeArchiveUrl() {
+  return scope.type === "project" ? `/api/projects/${scope.slug}/archive` : `/api/knowledge-bases/${scope.slug}/archive`;
 }
 
 const STATUS_PALETTE = ["#e4e1ff", "#e0e1f9", "#cfe8fb", "#fdedc4", "#ffd9e8", "#d3efdc"];
@@ -1851,6 +1905,8 @@ async function renderMembers() {
     scopeEncryptionFields.hidden = true;
   }
 
+  renderArchiveSection(data, isAdmin);
+
   const usernames = Object.keys(data.members);
   for (const username of usernames) {
     const role = data.members[username];
@@ -1892,6 +1948,41 @@ async function renderMembers() {
     membersList.innerHTML = `<p>No members — this ${label} is open to anyone right now (see docs/design/schema.md#permissions).</p>`;
   }
 }
+
+// Archiving just moves this project/note base out of the sidebar's main
+// list into "Archived" at the bottom (see renderArchivedNav) and drops its
+// tasks from Home — nothing about access or content changes, and
+// unarchiving is the same toggle in reverse. Personal projects skip this
+// entirely (no gear/Settings entry ever points at one, so this code path
+// is unreachable for them — see config.is_personal_project).
+function renderArchiveSection(data, isAdmin) {
+  scopeArchiveFields.hidden = !isAdmin;
+  if (!isAdmin) return;
+  const label = scope.type === "kb" ? "note base" : "project";
+  if (data.archived) {
+    archiveStatusText.textContent = `This ${label} is archived — hidden from the main sidebar and from Home.`;
+    archiveToggleBtn.innerHTML = '<span class="material-symbols-outlined icon-inline" aria-hidden="true">unarchive</span> Unarchive this ' + label;
+  } else {
+    archiveStatusText.textContent = `Archiving moves this ${label} to "Archived" at the bottom of the sidebar and stops its tasks showing up in Home. Nothing is deleted, and it can be unarchived any time.`;
+    archiveToggleBtn.innerHTML = '<span class="material-symbols-outlined icon-inline" aria-hidden="true">archive</span> Archive this ' + label;
+  }
+}
+
+archiveToggleBtn.addEventListener("click", async () => {
+  const res = await fetch(scopeArchiveUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ archived: !scopeConfig.archived }),
+  });
+  if (res.ok) {
+    scopeConfig = await res.json();
+    renderArchiveSection(scopeConfig, true);
+    await refreshNavLists();
+    showToast(scopeConfig.archived ? "Archived." : "Unarchived.");
+  } else {
+    showToast((await res.json()).detail || "Could not update archive status.", "error");
+  }
+});
 
 // Whole-project encryption at rest (see vault.py's module docstring for the
 // design this implements) — admin-only, shown inside the same panel as

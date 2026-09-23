@@ -232,6 +232,25 @@ def get_project_icon(slug: str) -> str:
     return read_project_config(slug).get("icon") or DEFAULT_PROJECT_ICON
 
 
+def is_project_archived(slug: str) -> bool:
+    """An archived project stays exactly as it is — still openable, still
+    editable by anyone who could before — just moved out of the sidebar's
+    main Projects list into its own Archived section (main.py's list_projects,
+    static/app.js's nav), and skipped by Home's my_tasks so its tasks stop
+    showing up there. Nothing about access or content changes; unarchiving
+    just flips this back."""
+    return bool(read_project_config(slug).get("archived"))
+
+
+def set_project_archived(slug: str, archived: bool) -> None:
+    cfg = read_project_config(slug)
+    if archived:
+        cfg["archived"] = True
+    else:
+        cfg.pop("archived", None)
+    _write_project_config(slug, cfg)
+
+
 def set_project_name(slug: str, name: str) -> str:
     cfg = read_project_config(slug)
     cfg["name"] = name
@@ -511,6 +530,21 @@ def get_kb_name(slug: str) -> str:
 
 def get_kb_icon(slug: str) -> str:
     return read_kb_config(slug).get("icon") or DEFAULT_KB_ICON
+
+
+def is_kb_archived(slug: str) -> bool:
+    """See is_project_archived — same "moved to the sidebar's Archived
+    section, otherwise unchanged" meaning."""
+    return bool(read_kb_config(slug).get("archived"))
+
+
+def set_kb_archived(slug: str, archived: bool) -> None:
+    cfg = read_kb_config(slug)
+    if archived:
+        cfg["archived"] = True
+    else:
+        cfg.pop("archived", None)
+    _write_kb_config(slug, cfg)
 
 
 def get_kb_member_roles(slug: str) -> dict[str, str]:

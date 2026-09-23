@@ -133,6 +133,37 @@ automatically (`add_project_member`/`add_kb_member`, main.py) — otherwise
 enabling membership on an open project you administer could accidentally
 lock you out of your own project in one click.
 
+### Archiving
+
+A project or note base can be **archived** — an `archived: true` flag in
+its `project.yml`/`kb.yml` (`config.set_project_archived`/
+`set_kb_archived`), toggled from a button at the bottom of its Settings
+panel, admin-only (`POST /api/{projects,knowledge-bases}/{slug}/archive`,
+`require_project_admin`/`require_kb_admin`). It changes exactly two
+things, both purely organizational:
+
+- **The sidebar**: `list_projects`/`list_knowledge_bases` (`GET`) include
+  the flag on every entry; the frontend (`refreshNavLists`, app.js) splits
+  on it, keeping archived ones out of the regular Projects/Note Bases
+  sections and instead listing them — projects and note bases mixed
+  together, sorted by name — under one **Archived** section at the bottom
+  of the sidebar, hidden entirely when there's nothing there
+  (`renderArchivedNav`). Each row still opens straight into that project's
+  Tasks or that note base's Notes, and its gear still opens Settings, where
+  the same button unarchives it.
+- **Home**: an archived project's tasks stop showing up in `/api/me/tasks`
+  (`my_tasks` skips `is_project_archived` slugs) — the point of archiving
+  is to stop old work from cluttering Home, not just the sidebar.
+
+Nothing else changes: members, roles, encryption state, content — all
+exactly as before, and every existing route keeps working on an archived
+scope the same as an active one (it's still reachable by URL, still
+editable by whoever could edit it before). A personal project
+(`is_personal_project`) can't be archived — it has no Settings entry to
+reach the toggle from in the first place, and there'd be nothing to
+declutter (it's already excluded from the sidebar and only ever surfaces
+inside Home).
+
 ## Task
 
 ```yaml
