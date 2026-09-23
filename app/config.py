@@ -25,6 +25,16 @@ WORKSPACE_DIR = Path(os.environ.get("PRAXIS_WORKSPACE_DIR", APP_DIR / "workspace
 TEMPLATES_DIR = WORKSPACE_DIR / "templates"
 _SHIPPED_TEMPLATES_DIR = APP_DIR / "templates"
 
+# Used instead of an empty body when a task/knowledge item is created with
+# no template picked — a generic starting skeleton, not tied to any
+# particular kind of work (unlike the named templates above). The leading
+# heading is a placeholder like the named templates' own (see
+# templates/task/research_question.md) — _apply_title overwrites it when a
+# title was given, and it's what a title-less item falls back to showing
+# otherwise (storage.title_from_body has no other fallback for a body that
+# already starts with a heading).
+DEFAULT_ITEM_BODY = "# {Untitled}\n\n## Summary\n\n## Notes\n"
+
 PROJECTS_DIR = WORKSPACE_DIR / "projects"
 KNOWLEDGE_BASES_DIR = WORKSPACE_DIR / "knowledge-bases"
 USERS_DIR = WORKSPACE_DIR / "users"

@@ -144,6 +144,7 @@ class NewScopeRequest(BaseModel):
 
 class CreateRequest(BaseModel):
     type: Literal["task", "knowledge"]
+    title: str = ""  # becomes the body's H1 — see _apply_title
     template: str | None = None
     assigned_to: list[str] = []
     tags: list[str] = []
@@ -808,6 +809,18 @@ def _check_parent_is_task(scope_dir: Path, parent_id: str) -> None:
         raise HTTPException(400, "Main task must be a task, not a knowledge item.")
 
 
+def _apply_title(body: str, title: str) -> str:
+    """Makes `title` the item's H1 (storage.title_from_body reads the body's
+    first non-empty line as the title) — replacing a template's own
+    placeholder heading when it starts with one, or adding a new line above
+    the body otherwise."""
+    lines = body.split("\n")
+    if lines and lines[0].strip().startswith("#"):
+        lines[0] = f"# {title}"
+        return "\n".join(lines)
+    return f"# {title}\n\n{body}" if body.strip() else f"# {title}\n"
+
+
 def _create_item(scope_dir: Path, req: CreateRequest, project_slug: str | None, owner: str) -> dict:
     content_dir, git_root = config.resolve_scope(scope_dir)
     with git_store.LOCK:
@@ -817,12 +830,19 @@ def _create_item(scope_dir: Path, req: CreateRequest, project_slug: str | None, 
         item_id = index.next_id(content_dir, req.type)
         today = datetime.date.today().isoformat()
 
-        body = ""
         if req.template:
             tpl_path = config.TEMPLATES_DIR / req.type / req.template
             if not tpl_path.exists():
                 raise HTTPException(404, f"Template not found: {req.type}/{req.template}")
             body = tpl_path.read_text(encoding="utf-8")
+        else:
+            body = config.DEFAULT_ITEM_BODY
+
+        # Always an explicit H1, even with no title from the client (a raw
+        # API call, not the "Title" field in the UI, which is required) —
+        # falls back to the item id, the same title storage.title_from_body
+        # would otherwise derive from a heading-less body on its own.
+        body = _apply_title(body, req.title.strip() or item_id)
 
         assigned_to = req.assigned_to
         if req.type == "task" and not assigned_to and project_slug and config.get_members(project_slug) == [owner]:

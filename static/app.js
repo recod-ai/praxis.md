@@ -3516,6 +3516,7 @@ for (const btn of notesViewToggle.querySelectorAll("button")) {
 // --- creating a new item ---
 
 const dialog = document.getElementById("new-dialog");
+const newTitle = document.getElementById("new-title");
 const newTemplate = document.getElementById("new-template");
 
 let pendingCreateType = "task";
@@ -3545,9 +3546,11 @@ async function openCreateDialog(opts) {
   pendingCreateParent = opts.parent || null;
   pendingCreateFolder = opts.folder !== undefined ? opts.folder : (pendingCreateType === "knowledge" ? currentNoteFolder : null);
 
+  newTitle.value = "";
   await refreshTemplateOptions();
 
   dialog.showModal();
+  newTitle.focus();
 }
 
 const templateEditorDialog = document.getElementById("template-editor-dialog");
@@ -3643,6 +3646,7 @@ document.getElementById("new-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const body = {
     type: pendingCreateType,
+    title: newTitle.value.trim(),
     template: newTemplate.value || null,
   };
   if (pendingCreateStatus) body.status = pendingCreateStatus;

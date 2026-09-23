@@ -221,8 +221,17 @@ Creation flow: **Create → Task → Research Question** copies the content of
 into the new file's body — it's just a starting point. No record of which
 template was used is kept on the created file (no `template:` field, no
 trace at all) — once created, it's a task/knowledge item like any other.
-Tasks and knowledge items can also be created **without** a template, with
-a free-form body.
+
+The "New item" dialog also has a required **Title** field, sent as
+`CreateRequest.title` and applied as the body's H1 (`main.py`'s
+`_apply_title`) — replacing a template's own placeholder heading when it
+has one, or added above the body otherwise. A raw API call that omits it
+falls back to the new item's id, same as before this field existed.
+
+Tasks and knowledge items can also be created **without** a template — that
+gets `config.DEFAULT_ITEM_BODY`, a generic `## Summary` / `## Notes`
+skeleton (not one of the named templates above, and not itself listed in
+the template picker), rather than a blank body.
 
 **Editable from the app itself**, not just by hand on disk: the "New item"
 dialog's template picker has a pencil icon (edit the selected template) and
