@@ -394,9 +394,6 @@ select {
    behind it. 54px = the hamburger's right edge (58) minus this sidebar's
    own 12px padding, plus an 8px gap. */
 #sidebar-header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding-left: 54px; }
-#agorae-home { display: inline-flex; width: 36px; height: 36px; padding: 6px; margin-right: 6px; border-radius: 50%; color: var(--primary); }
-#agorae-home:hover, #agorae-home:focus-visible { background: color-mix(in srgb, var(--on-surface) 8%, transparent); outline: none; }
-#agorae-home svg { width: 100%; height: 100%; }
 .brand { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 17px; letter-spacing: 0.1px; }
 
 #user-box { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--on-surface-variant); }
